@@ -80,10 +80,96 @@ pub enum Rel {
     SameEpisode,
 }
 
+impl Rel {
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "supports" => Ok(Rel::Supports),
+            "refines" => Ok(Rel::Refines),
+            "depends_on" => Ok(Rel::DependsOn),
+            "caused_by" => Ok(Rel::CausedBy),
+            "conflicts_confirmed" => Ok(Rel::ConflictsConfirmed),
+            "tension_possible" => Ok(Rel::TensionPossible),
+            "context_qualified" => Ok(Rel::ContextQualified),
+            "coexists" => Ok(Rel::Coexists),
+            "supersedes" => Ok(Rel::Supersedes),
+            "superseded_by" => Ok(Rel::SupersededBy),
+            "aspect_of" => Ok(Rel::AspectOf),
+            "same_episode" => Ok(Rel::SameEpisode),
+            _ => Err(AlexandriaError::InvalidEngram(format!("unknown rel: {s}"))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Rel::Supports => "supports",
+            Rel::Refines => "refines",
+            Rel::DependsOn => "depends_on",
+            Rel::CausedBy => "caused_by",
+            Rel::ConflictsConfirmed => "conflicts_confirmed",
+            Rel::TensionPossible => "tension_possible",
+            Rel::ContextQualified => "context_qualified",
+            Rel::Coexists => "coexists",
+            Rel::Supersedes => "supersedes",
+            Rel::SupersededBy => "superseded_by",
+            Rel::AspectOf => "aspect_of",
+            Rel::SameEpisode => "same_episode",
+        }
+    }
+
+    pub fn is_symmetric(self) -> bool {
+        matches!(
+            self,
+            Rel::ConflictsConfirmed
+                | Rel::Coexists
+                | Rel::TensionPossible
+                | Rel::ContextQualified
+        )
+    }
+
+    pub fn reciprocal(self) -> Option<Self> {
+        match self {
+            Rel::Supersedes => Some(Rel::SupersededBy),
+            Rel::SupersededBy => Some(Rel::Supersedes),
+            Rel::ConflictsConfirmed
+            | Rel::Coexists
+            | Rel::TensionPossible
+            | Rel::ContextQualified => Some(self),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Source {
     pub kind: String,
     pub r#ref: String,
+}
+
+impl Source {
+    /// Parse `kind:ref` (e.g. `conversation:conv_2026-05-28#42`).
+    pub fn parse_cli(s: &str) -> Result<Self> {
+        let (kind, r#ref) = s.split_once(':').ok_or_else(|| {
+            AlexandriaError::InvalidEngram(format!(
+                "source must be kind:ref (e.g. conversation:conv_1), got: {s}"
+            ))
+        })?;
+        if kind.is_empty() || r#ref.is_empty() {
+            return Err(AlexandriaError::InvalidEngram(format!(
+                "source must be kind:ref with non-empty parts, got: {s}"
+            )));
+        }
+        Ok(Self {
+            kind: kind.to_string(),
+            r#ref: r#ref.to_string(),
+        })
+    }
+
+    pub fn derived_from(engram_id: &str) -> Self {
+        Self {
+            kind: "derived".into(),
+            r#ref: engram_id.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -295,6 +381,16 @@ mod tests {
         assert_eq!(a, b);
         assert!(a.starts_with("eng_"));
         assert_eq!(a.len(), 20); // eng_ + 16 hex (8 bytes)
+    }
+
+    #[test]
+    fn source_parse_cli() {
+        let s = Source::parse_cli("conversation:conv_2026-05-28#42").unwrap();
+        assert_eq!(s.kind, "conversation");
+        assert_eq!(s.r#ref, "conv_2026-05-28#42");
+        let d = Source::derived_from("eng_abc");
+        assert_eq!(d.kind, "derived");
+        assert_eq!(d.r#ref, "eng_abc");
     }
 
     #[test]

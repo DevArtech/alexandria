@@ -13,6 +13,8 @@ pub struct Config {
     pub budgets: BudgetsConfig,
     #[serde(default)]
     pub thresholds: ThresholdsConfig,
+    #[serde(default)]
+    pub consolidation: ConsolidationConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -143,6 +145,66 @@ impl Default for Config {
                 default_recall_tokens: default_recall_tokens(),
             },
             thresholds: ThresholdsConfig::default(),
+            consolidation: ConsolidationConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsolidationConfig {
+    /// Max semantic L2 distance to consider near-duplicates for merge.
+    #[serde(default = "default_dedupe_max_distance")]
+    pub dedupe_max_distance: f32,
+    /// Min token overlap ratio (0..1) between claims to merge.
+    #[serde(default = "default_dedupe_claim_overlap")]
+    pub dedupe_claim_overlap: f64,
+    /// Incoming supports required for episodic -> provisional promotion.
+    #[serde(default = "default_promote_episodic_to_provisional")]
+    pub promote_episodic_to_provisional: u32,
+    /// Incoming supports required for provisional -> semantic promotion.
+    #[serde(default = "default_promote_provisional_to_semantic")]
+    pub promote_provisional_to_semantic: u32,
+    /// Salience half-life in days of inactivity.
+    #[serde(default = "default_salience_half_life_days")]
+    pub salience_half_life_days: f64,
+    /// Minimum salience after decay.
+    #[serde(default = "default_salience_floor")]
+    pub salience_floor: f64,
+}
+
+fn default_dedupe_max_distance() -> f32 {
+    0.25
+}
+
+fn default_dedupe_claim_overlap() -> f64 {
+    0.6
+}
+
+fn default_promote_episodic_to_provisional() -> u32 {
+    1
+}
+
+fn default_promote_provisional_to_semantic() -> u32 {
+    2
+}
+
+fn default_salience_half_life_days() -> f64 {
+    30.0
+}
+
+fn default_salience_floor() -> f64 {
+    0.05
+}
+
+impl Default for ConsolidationConfig {
+    fn default() -> Self {
+        Self {
+            dedupe_max_distance: default_dedupe_max_distance(),
+            dedupe_claim_overlap: default_dedupe_claim_overlap(),
+            promote_episodic_to_provisional: default_promote_episodic_to_provisional(),
+            promote_provisional_to_semantic: default_promote_provisional_to_semantic(),
+            salience_half_life_days: default_salience_half_life_days(),
+            salience_floor: default_salience_floor(),
         }
     }
 }

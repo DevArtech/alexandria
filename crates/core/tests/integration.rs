@@ -1,5 +1,6 @@
 use alexandria_core::{
-    build_embedder, Config, Engram, Index, Library, RecallState, Retrieval, Status, Tier,
+    build_embedder, Config, Engram, Graph, Index, Library, Ops, RecallState, Rel, Retrieval,
+    Source, Status, Tier,
 };
 use tempfile::TempDir;
 
@@ -154,4 +155,65 @@ fn expand_and_relational_suppression() {
 
     let retrieval = Retrieval::new(&index, &config);
     assert!(retrieval.expand(&rel.id, None).is_err());
+}
+
+#[test]
+fn reindex_rebuilds_sources_table() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+
+    let mut engram = Engram::new("derived fact", "body", Tier::Semantic, Status::Confirmed);
+    engram.source.push(Source {
+        kind: "conversation".into(),
+        r#ref: "conv_2026".into(),
+    });
+    let path = lib.write_engram(&engram).unwrap();
+
+    let index = open_index(&lib, &config);
+    index.upsert(&engram, &path.display().to_string()).unwrap();
+
+    std::fs::remove_file(lib.index_path()).unwrap();
+    let index2 = open_index(&lib, &config);
+    index2.reindex(&lib).unwrap();
+
+    let count: i64 = index2
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM sources WHERE engram_id = ?1",
+            [&engram.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+
+    let graph = Graph::new(&index2);
+    let trace = graph.trace(&engram.id).unwrap();
+    assert_eq!(trace.nodes.len(), 1);
+    assert_eq!(trace.nodes[0].source_kind, "conversation");
+}
+
+#[test]
+fn link_and_trace_flow() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+    let index = open_index(&lib, &config);
+
+    let a = Engram::new("parent", "body", Tier::Semantic, Status::Confirmed);
+    let b = Engram::new("child", "body", Tier::Semantic, Status::Confirmed);
+    let pa = lib.write_engram(&a).unwrap();
+    let pb = lib.write_engram(&b).unwrap();
+    index.upsert(&a, &pa.display().to_string()).unwrap();
+    index.upsert(&b, &pb.display().to_string()).unwrap();
+
+    let ops = Ops::new(&lib, &index);
+    ops.link(&a.id, Rel::Supports, &b.id).unwrap();
+
+    let graph = Graph::new(&index);
+    let walk = graph
+        .traverse(&a.id, Some(&[Rel::Supports]), 1)
+        .unwrap();
+    assert_eq!(walk.nodes.len(), 1);
+    assert_eq!(walk.nodes[0].id, b.id);
 }

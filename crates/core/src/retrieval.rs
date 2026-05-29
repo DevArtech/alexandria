@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::config::{Config, ThresholdsConfig};
 use crate::engram::{Engram, Rel, Tier};
 use crate::error::Result;
+use crate::graph::compute_effective_confidence;
 use crate::index::Index;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -55,6 +56,8 @@ pub struct RecallHit {
     pub tier: String,
     pub status: String,
     pub score: f64,
+    pub confidence: f64,
+    pub effective_confidence: f64,
     pub token_cost: u32,
     pub signals: Vec<String>,
 }
@@ -95,6 +98,8 @@ pub struct ExpandResult {
     pub tier: String,
     pub status: String,
     pub body: String,
+    pub confidence: f64,
+    pub effective_confidence: f64,
     pub token_cost: u32,
     pub links: Vec<LinkClaim>,
 }
@@ -165,6 +170,7 @@ impl<'a> Retrieval<'a> {
         let response_mode = classify_response_mode(state);
 
         let tree = build_context_tree(
+            self.index,
             &fused,
             &semantic_distances,
             has_lexical_match,
@@ -205,6 +211,9 @@ impl<'a> Retrieval<'a> {
             })
             .collect();
 
+        let engram = self.load_engram_for_confidence(id, &row)?;
+        let effective = compute_effective_confidence(self.index, &engram)?;
+
         let token_cost = Engram::estimate_tokens(&row.body);
 
         Ok(ExpandResult {
@@ -213,8 +222,47 @@ impl<'a> Retrieval<'a> {
             tier: tier_label(row.tier).to_string(),
             status: status_label(row.status).to_string(),
             body: row.body,
+            confidence: engram.confidence,
+            effective_confidence: effective,
             token_cost,
             links: link_claims,
+        })
+    }
+
+    fn load_engram_for_confidence(&self, id: &str, row: &crate::index::EngramRow) -> Result<Engram> {
+        if let Some(path) = self.index.file_path(id)? {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(engram) = Engram::parse(&content) {
+                    return Ok(engram);
+                }
+            }
+        }
+        Ok(Engram {
+            id: row.id.clone(),
+            tier: row.tier,
+            status: row.status,
+            claim: row.claim.clone(),
+            created: chrono::Utc::now(),
+            updated: chrono::Utc::now(),
+            last_touched: chrono::Utc::now(),
+            source: Vec::new(),
+            confidence: row.confidence,
+            salience: 0.7,
+            collections: row.collections.clone(),
+            tags: Vec::new(),
+            links: row
+                .links
+                .iter()
+                .map(|(rel, to)| crate::engram::Link {
+                    rel: *rel,
+                    to: to.clone(),
+                })
+                .collect(),
+            embedding_ref: None,
+            shape_ref: None,
+            surface_when: None,
+            output_policy: None,
+            body: row.body.clone(),
         })
     }
 
@@ -407,7 +455,37 @@ fn classify_response_mode(state: RecallState) -> ResponseMode {
     }
 }
 
+fn hit_confidence(index: &Index, id: &str, status: &str) -> (f64, f64) {
+    let confidence = index
+        .get_engram(id)
+        .ok()
+        .flatten()
+        .map(|r| r.confidence)
+        .unwrap_or(0.9);
+    let mut effective = if let (Ok(Some(path)), Ok(sources)) =
+        (index.file_path(id), index.get_sources(id))
+    {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(mut engram) = Engram::parse(&content) {
+                engram.source = sources;
+                compute_effective_confidence(index, &engram).unwrap_or(confidence)
+            } else {
+                confidence
+            }
+        } else {
+            confidence
+        }
+    } else {
+        confidence
+    };
+    if status == "provisional" {
+        effective = effective.min(0.75);
+    }
+    (confidence, effective)
+}
+
 fn build_context_tree(
+    index: &Index,
     fused: &[FusedHit],
     semantic_distances: &HashMap<String, f32>,
     has_lexical_match: bool,
@@ -439,12 +517,15 @@ fn build_context_tree(
             .first()
             .cloned()
             .unwrap_or_else(|| "_uncategorized".to_string());
+        let (confidence, effective) = hit_confidence(index, &hit.id, hit.status.as_str());
         let recall_hit = RecallHit {
             id: hit.id.clone(),
             claim: hit.claim.clone(),
             tier: hit.tier.clone(),
             status: hit.status.clone(),
             score: hit.score,
+            confidence,
+            effective_confidence: effective,
             token_cost: 0,
             signals: hit.signals.clone(),
         };

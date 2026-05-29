@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
-use alexandria_core::{Config, Index, Library, Rel, Retrieval};
+use alexandria_core::{Config, Index, Library, Retrieval};
 use anyhow::Result;
 
 use crate::OutputFormat;
+use crate::commands::util::parse_rel_cli;
 
 pub fn run(
     library_path: Option<PathBuf>,
@@ -33,28 +34,14 @@ pub fn run(
     Ok(())
 }
 
-fn parse_rel_cli(s: &str) -> Result<Rel> {
-    match s {
-        "supports" => Ok(Rel::Supports),
-        "refines" => Ok(Rel::Refines),
-        "depends_on" => Ok(Rel::DependsOn),
-        "caused_by" => Ok(Rel::CausedBy),
-        "conflicts_confirmed" => Ok(Rel::ConflictsConfirmed),
-        "tension_possible" => Ok(Rel::TensionPossible),
-        "context_qualified" => Ok(Rel::ContextQualified),
-        "coexists" => Ok(Rel::Coexists),
-        "supersedes" => Ok(Rel::Supersedes),
-        "superseded_by" => Ok(Rel::SupersededBy),
-        "aspect_of" => Ok(Rel::AspectOf),
-        "same_episode" => Ok(Rel::SameEpisode),
-        other => anyhow::bail!("unknown rel: {other}"),
-    }
-}
-
 fn print_human(result: &alexandria_core::ExpandResult) {
     println!("[{}] {}", result.id, result.claim);
     println!("tier: {}", result.tier);
     println!("status: {}", result.status);
+    println!(
+        "confidence: {:.2} (effective: {:.2})",
+        result.confidence, result.effective_confidence
+    );
     println!("token_cost: {}", result.token_cost);
     println!();
     println!("{}", result.body);

@@ -22,7 +22,15 @@ The full design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status
 
-Alexandria is under active construction. **Milestone 2 (hybrid retrieval) is implemented:** local embeddings (`fastembed` default, `hash` for offline/tests), `sqlite-vec` semantic search, RRF fusion of lexical + semantic signals, all five recall states (including density-based gap states), progressive-disclosure context trees with token budgets, and the `expand` verb. The graph/conflict layer, consolidation, and full provider integrations are planned (see [Roadmap](#roadmap)).
+Alexandria is under active construction. **Milestone 3 (graph + consolidation) is implemented**, on top of M1 (plain-text store, FTS5 index, five-state recall) and M2 (hybrid `sqlite-vec` semantic search, RRF fusion, density-based gap states, progressive-disclosure context trees, `expand`). M3 adds:
+
+- **Typed-edge graph** with multi-hop traversal (recursive CTEs) and the full conflict taxonomy (`conflicts_confirmed`, `tension_possible`, `context_qualified`, `coexists`, `supersedes`/`superseded_by`).
+- **Provenance**: record `--source` / `--derived-from` on `remember`, then `trace` walks the DAG back to first-party sources and reports effective confidence (derived-premise bound + conflict penalty).
+- **The promotion ladder**: `episodic → provisional → semantic`, with conflict-driven demotion.
+- **The consolidation "sleep" pass** (`consolidate` / `reflect`): dedupe + merge near-duplicates, promote/demote, salience decay, and collection roll-ups.
+- New verbs: `link`, `trace`, `timeline`, `archive`/`forget`, `consolidate`, `reflect`.
+
+The relational `style` channel, meta-memory, response modes, and full provider integrations are planned (see [Roadmap](#roadmap)).
 
 ## Build
 
@@ -57,6 +65,10 @@ cat notes.md | alexandria remember -
 alexandria remember "The user prefers terse answers" --tier relational
 alexandria remember "Auth flow uses short-lived JWTs" --collection project-x --tag auth
 
+# Record provenance: where a claim came from, or what it was derived from
+alexandria remember "User said use Rust" --tier episodic --source conversation:conv_1
+alexandria remember "Alexandria is written in Rust" --derived-from eng_89187aa4
+
 # 3. Recall (hybrid lexical + semantic, RRF fusion) with a token budget
 alexandria recall "hybrid retrieval"
 alexandria recall "auth jwt" --budget 1500 --format json
@@ -65,7 +77,20 @@ alexandria recall "auth jwt" --budget 1500 --format json
 alexandria expand eng_7f3a2c
 alexandria expand eng_7f3a2c --rel depends_on --format json
 
-# 5. Rebuild the index entirely from the Markdown store
+# 5. Relate engrams with typed edges (reciprocals added automatically)
+alexandria link eng_aaa supports eng_bbb
+alexandria link eng_new supersedes eng_old        # old is marked superseded + archived
+alexandria link eng_aaa conflicts_confirmed eng_ccc
+
+# 6. Walk provenance, view the timeline
+alexandria trace eng_7f3a2c
+alexandria timeline --since 2026-05-01 --tier episodic
+
+# 7. Archive (never deleted) and run the consolidation "sleep" pass
+alexandria archive eng_old      # alias: alexandria forget eng_old
+alexandria consolidate          # dedupe, promote/demote, decay, re-summarize
+
+# 8. Rebuild the index entirely from the Markdown store
 alexandria reindex
 ```
 
@@ -111,8 +136,8 @@ my-library/
 ├── procedural/
 ├── relational/          # never surfaced as quotable text
 ├── threads/             # open threads (unresolved_by_design)
-├── collections/
-└── archive/             # "forgotten" — moved here, never deleted
+├── collections/         # roll-up summaries written by `consolidate`
+└── archive/             # "forgotten" / superseded — moved here, never deleted
 ```
 
 A library is just a directory — `git init` it for free time-travel over your memory.
@@ -162,8 +187,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, includ
 | --- | --- |
 | **M1 — Skeleton** ✅ | Plain-text store, SQLite + FTS5 index, `init`/`remember`/`recall` (lexical)/`reindex`, five-state recall + response modes |
 | **M2 — Hybrid + budget** ✅ | Local embeddings (`fastembed` + `hash` for tests), semantic search, RRF fusion, density-based gap states, progressive-disclosure context tree, `expand` |
-| **M3 — Graph + consolidation** | Typed edges + traversal, conflict taxonomy, provisional promotion ladder, `link`/`trace`/`timeline`, the `reflect`/`consolidate` "sleep" pass |
-| **M4 — Relational, shape, meta-memory, modes** | Relational `style` channel, episodic shape index, meta-memory, fast/slow reflection, open-thread surfacing |
+| **M3 — Graph + consolidation** ✅ | Typed edges + traversal, conflict taxonomy, provenance (`--source`/`--derived-from` + `trace`), provisional promotion ladder, `link`/`timeline`/`archive`, the `reflect`/`consolidate` "sleep" pass |
+| **M4 — Relational, shape, meta-memory, modes** | Relational `style` channel, episodic shape index, meta-memory, fast/slow reflection (`reflect --fast`), open-thread surfacing |
 | **M5 — Providers & polish** | Ollama + cloud providers, reranker, threshold self-calibration |
 
 ## License

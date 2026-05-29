@@ -2,7 +2,7 @@
 
 > A local-first, CLI-first "second brain" designed for how an LLM actually thinks, retrieves, and reasons — not for how a human files paper notes.
 
-**Status:** M1 + M2 implemented (store, hybrid retrieval, expand); M3+ planned
+**Status:** M1 + M2 + M3 implemented (store, hybrid retrieval, graph, consolidation); M4+ planned
 **Target runtime:** Rust (single binary)
 **Posture:** Local-first, plain-text source of truth, pluggable embedding/LLM providers (local default)
 
@@ -646,7 +646,7 @@ my-library/
 | --- | --- |
 | **M1 — Skeleton** ✅ | Store (Markdown + frontmatter, all tiers incl. `provisional`/`relational`/`threads` dirs), SQLite index with metadata + FTS5, `remember` / `recall` (lexical only), `reindex`. |
 | **M2 — Hybrid + budget + five-state** ✅ | `sqlite-vec` semantic search, RRF fusion, **five-state recall** + density check, progressive-disclosure context tree, `expand`, token-budget API, `--format json`. `fastembed` default; `hash` embedder for offline/tests. |
-| **M3 — Graph, conflicts, consolidation, provisional** | Typed `edges` + recursive-CTE traversal, `link`, `trace`, `timeline`, the **conflict taxonomy** (Section 8), the promotion ladder (`provisional`), and the slow-pass `reflect`/`consolidate` (dedupe, promote, re-summarize, decay, `archive`). |
+| **M3 — Graph, conflicts, consolidation, provisional** ✅ | Typed `edges` + recursive-CTE traversal, `link`, `trace`, `timeline`, the **conflict taxonomy** (Section 8), the promotion ladder (`provisional`), and the slow-pass `reflect`/`consolidate` (dedupe, promote, re-summarize, decay, `archive`). Deterministic/heuristic consolidation only; LLM-driven merge/classification deferred to M4/M5. |
 | **M4 — Relational, shape, meta-memory, modes** | Relational tier + structurally-suppressed `style`/`style_profile()`, structural-pattern extraction + shape index + shape signal, meta-memory index + `meta`, response-mode judge wired into `recall`, two-track `reflect --fast`, open-thread `threads` surfacing. |
 | **M5 — Providers & polish** | Full provider abstraction (Ollama + cloud `Completer`/`Embedder`), config-driven selection, re-embed on model change, optional reranker, threshold self-calibration from meta-memory. |
 

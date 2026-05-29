@@ -1,59 +1,73 @@
 use std::io::{self, Read};
 use std::path::PathBuf;
 
-use alexandria_core::{Engram, Index, Library, Status, Tier};
+use alexandria_core::{Engram, Index, Library, Source, Status, Tier};
 use anyhow::Result;
 
 use crate::OutputFormat;
 
-pub fn run(
-    library_path: Option<PathBuf>,
-    format: OutputFormat,
-    text: String,
-    tier: Option<String>,
-    status: Option<String>,
-    collections: Vec<String>,
-    tags: Vec<String>,
-) -> Result<()> {
-    let content = if text == "-" {
+pub struct RememberOptions {
+    pub library_path: Option<PathBuf>,
+    pub format: OutputFormat,
+    pub text: String,
+    pub tier: Option<String>,
+    pub status: Option<String>,
+    pub collections: Vec<String>,
+    pub tags: Vec<String>,
+    pub sources: Vec<String>,
+    pub derived_from: Vec<String>,
+}
+
+pub fn run(opts: RememberOptions) -> Result<()> {
+    let content = if opts.text == "-" {
         let mut buf = String::new();
         io::stdin().read_to_string(&mut buf)?;
         buf
     } else {
-        text
+        opts.text
     };
 
     let (claim, body) = split_claim_body(&content);
 
-    let tier = match tier.as_deref() {
+    let tier = match opts.tier.as_deref() {
         Some(s) => Tier::parse(s)?,
         None => Tier::Semantic,
     };
 
-    let status = match status.as_deref() {
+    let status = match opts.status.as_deref() {
         Some(s) => Status::parse(s)?,
         None => Status::Confirmed,
     };
 
-    let library = match library_path {
+    let library = match opts.library_path {
         Some(p) => Library::discover(Some(&p))?,
         None => Library::discover(None)?,
     };
 
     let mut engram = Engram::new(claim, body, tier, status);
-    engram.collections = collections;
-    engram.tags = tags;
+    engram.collections = opts.collections;
+    engram.tags = opts.tags;
+
+    for s in opts.sources {
+        engram.source.push(Source::parse_cli(&s)?);
+    }
+    for id in opts.derived_from {
+        engram.source.push(Source::derived_from(&id));
+    }
 
     let path = library.write_engram(&engram)?;
     let config = alexandria_core::Config::load(&library.root)?;
     let index = Index::open(&library, &config)?;
     index.upsert(&engram, &path.display().to_string())?;
 
-    match format {
+    match opts.format {
         OutputFormat::Human => {
             println!("Remembered {} ({})", engram.id, engram.claim);
             println!("  tier: {:?}", engram.tier);
             println!("  path: {}", path.display());
+            if !engram.source.is_empty() {
+                println!("  sources: {}", engram.source.len());
+            }
         }
         OutputFormat::Json => {
             println!(
@@ -64,6 +78,7 @@ pub fn run(
                     "tier": tier_label(engram.tier),
                     "status": status_label(engram.status),
                     "path": path.display().to_string(),
+                    "sources": engram.source,
                     "token_cost": Engram::estimate_tokens(&engram.claim)
                 })
             );

@@ -15,6 +15,7 @@ fn register_vec_extension() {
     VEC_EXTENSION.call_once(|| unsafe {
         use rusqlite::ffi::sqlite3_auto_extension;
         use sqlite_vec::sqlite3_vec_init;
+        #[allow(clippy::missing_transmute_annotations)]
         sqlite3_auto_extension(Some(std::mem::transmute(
             sqlite3_vec_init as *const (),
         )));
@@ -40,6 +41,11 @@ CREATE TABLE IF NOT EXISTS edges(
   rel TEXT NOT NULL,
   to_id TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sources(
+  engram_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  ref TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS collection_members(
   engram_id TEXT NOT NULL,
   collection TEXT NOT NULL
@@ -62,6 +68,8 @@ CREATE INDEX IF NOT EXISTS idx_engrams_tier ON engrams(tier);
 CREATE INDEX IF NOT EXISTS idx_engrams_created ON engrams(created);
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
+CREATE INDEX IF NOT EXISTS idx_sources_engram ON sources(engram_id);
+CREATE INDEX IF NOT EXISTS idx_sources_ref ON sources(ref);
 
 CREATE TRIGGER IF NOT EXISTS engrams_ai AFTER INSERT ON engrams BEGIN
   INSERT INTO engrams_fts(rowid, claim, body) VALUES (new.rowid, new.claim, new.body);
@@ -101,6 +109,7 @@ pub struct EngramRow {
     pub status: Status,
     pub claim: String,
     pub body: String,
+    pub confidence: f64,
     pub collections: Vec<String>,
     pub links: Vec<(Rel, String)>,
 }
@@ -298,6 +307,7 @@ impl Index {
             DROP TABLE IF EXISTS engrams_fts;
             DROP TABLE IF EXISTS tags;
             DROP TABLE IF EXISTS collection_members;
+            DROP TABLE IF EXISTS sources;
             DROP TABLE IF EXISTS edges;
             DROP TABLE IF EXISTS engrams;
             DROP TABLE IF EXISTS index_meta;
@@ -316,6 +326,10 @@ impl Index {
     }
 
     pub fn upsert(&self, engram: &Engram, file_path: &str) -> Result<()> {
+        self.upsert_inner(engram, file_path, true)
+    }
+
+    fn upsert_inner(&self, engram: &Engram, file_path: &str, embed: bool) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
 
         tx.execute(
@@ -373,18 +387,48 @@ impl Index {
             )?;
         }
 
+        tx.execute(
+            "DELETE FROM sources WHERE engram_id = ?1",
+            params![engram.id],
+        )?;
+        for source in &engram.source {
+            tx.execute(
+                "INSERT INTO sources (engram_id, kind, ref) VALUES (?1, ?2, ?3)",
+                params![engram.id, source.kind, source.r#ref],
+            )?;
+        }
+
         tx.commit()?;
 
-        if engram.tier != Tier::Relational {
-            self.upsert_embedding(rowid, engram)?;
-        } else {
-            let _ = self.conn.execute(
-                &format!("DELETE FROM {VEC_TABLE} WHERE rowid = ?1"),
-                params![rowid],
-            );
+        if embed {
+            if engram.tier != Tier::Relational {
+                self.upsert_embedding(rowid, engram)?;
+            } else {
+                let _ = self.conn.execute(
+                    &format!("DELETE FROM {VEC_TABLE} WHERE rowid = ?1"),
+                    params![rowid],
+                );
+            }
         }
 
         Ok(())
+    }
+
+    pub fn get_sources(&self, engram_id: &str) -> Result<Vec<crate::engram::Source>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, ref FROM sources WHERE engram_id = ?1 ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map(params![engram_id], |row| {
+            Ok(crate::engram::Source {
+                kind: row.get(0)?,
+                r#ref: row.get(1)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     fn embed_text(engram: &Engram) -> String {
@@ -465,9 +509,9 @@ impl Index {
         let scan = library.scan_engrams();
         for engram in &scan.engrams {
             let path = library.engram_path(engram)?;
-            self.upsert(engram, &path.display().to_string())?;
+            self.upsert_inner(engram, &path.display().to_string(), false)?;
         }
-        if self.needs_reembed() || self.config.is_some() {
+        if self.config.is_some() || self.needs_reembed() {
             self.reembed_all_engrams()?;
         }
         Ok(ReindexResult {
@@ -581,9 +625,22 @@ impl Index {
         Ok(Some(sum))
     }
 
+    pub fn file_path(&self, id: &str) -> Result<Option<String>> {
+        let row = self.conn.query_row(
+            "SELECT file_path FROM engrams WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        );
+        match row {
+            Ok(path) => Ok(Some(path)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn get_engram(&self, id: &str) -> Result<Option<EngramRow>> {
         let row = self.conn.query_row(
-            "SELECT id, tier, status, claim, body FROM engrams WHERE id = ?1",
+            "SELECT id, tier, status, claim, body, confidence FROM engrams WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
@@ -592,11 +649,12 @@ impl Index {
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
+                    row.get::<_, f64>(5)?,
                 ))
             },
         );
 
-        let (id, tier_s, status_s, claim, body) = match row {
+        let (id, tier_s, status_s, claim, body, confidence) = match row {
             Ok(r) => r,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(e) => return Err(e.into()),
@@ -630,6 +688,7 @@ impl Index {
             status,
             claim,
             body,
+            confidence,
             collections,
             links,
         }))

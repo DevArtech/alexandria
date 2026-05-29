@@ -104,6 +104,38 @@ impl Library {
         Ok(dir.join(format!("{}.md", engram.id)))
     }
 
+    /// Write an engram, relocating the file when tier/status changes the target path.
+    /// Deletes the old file when the path changes.
+    pub fn save_relocating(&self, engram: &Engram, old_path: Option<&Path>) -> Result<PathBuf> {
+        if engram.tier == Tier::Working {
+            return Err(AlexandriaError::EphemeralTier("working".into()));
+        }
+        let new_path = self.engram_path(engram)?;
+        if let Some(old) = old_path {
+            let old_canon = old.canonicalize().unwrap_or_else(|_| old.to_path_buf());
+            let new_canon = new_path.canonicalize().unwrap_or_else(|_| new_path.clone());
+            if old_canon != new_canon && old.exists() {
+                fs::remove_file(old)?;
+            }
+        }
+        if new_path.exists() {
+            let existing = self.read_engram(&new_path)?;
+            if existing.claim != engram.claim || existing.created != engram.created {
+                return Err(AlexandriaError::IdCollision {
+                    id: engram.id.clone(),
+                    path: new_path.display().to_string(),
+                    existing_claim: existing.claim,
+                });
+            }
+        }
+        if let Some(parent) = new_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let content = engram.serialize()?;
+        fs::write(&new_path, content)?;
+        Ok(new_path)
+    }
+
     pub fn write_engram(&self, engram: &Engram) -> Result<PathBuf> {
         if engram.tier == Tier::Working {
             return Err(AlexandriaError::EphemeralTier("working".into()));
