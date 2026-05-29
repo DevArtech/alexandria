@@ -21,10 +21,18 @@ pub struct ProvidersConfig {
     pub embedder: String,
     #[serde(default)]
     pub completer: Option<String>,
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EmbeddingConfig {
+    /// fastembed model name (e.g. BGESmallENV15)
+    pub model: Option<String>,
 }
 
 fn default_embedder() -> String {
-    "none".to_string()
+    "fastembed".to_string()
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -37,22 +45,90 @@ fn default_recall_tokens() -> u32 {
     2000
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThresholdsConfig {
-    /// FTS5 bm25 upper bound for strong_hit (more negative = better; score must be <= this).
+    /// RRF constant k (typically 60).
+    #[serde(default = "default_rrf_k")]
+    pub rrf_k: u32,
+    /// Fused RRF score lower bound for strong_hit (among distance-qualified hits).
     #[serde(default = "default_strong_cutoff")]
     pub strong_cutoff: f64,
-    /// FTS5 bm25 upper bound for weak_hit (must be > strong_cutoff, closer to zero).
+    /// Fused RRF score lower bound for weak_hit (among distance-qualified hits).
     #[serde(default = "default_weak_cutoff")]
     pub weak_cutoff: f64,
+    /// Minimum distinct signals (lexical + semantic) for strong_hit corroboration.
+    #[serde(default = "default_min_corroborating_signals")]
+    pub min_corroborating_signals: u32,
+    /// Max L2 distance for top semantic hit to count as weak_hit.
+    #[serde(default = "default_semantic_weak_max_distance")]
+    pub semantic_weak_max_distance: f32,
+    /// Max L2 distance for top semantic hit to count toward strong_hit (with corroboration).
+    #[serde(default = "default_semantic_strong_max_distance")]
+    pub semantic_strong_max_distance: f32,
+    /// Max L2 distance for density neighborhood (high_confidence_gap).
+    #[serde(default = "default_density_radius")]
+    pub density_radius: f32,
+    /// Min neighbors within density_radius for high_confidence_gap.
+    #[serde(default = "default_density_min_count")]
+    pub density_min_count: u32,
+    /// Max L2 distance to nearest collection centroid for low_confidence_gap.
+    #[serde(default = "default_centroid_radius")]
+    pub centroid_radius: f32,
+}
+
+fn default_rrf_k() -> u32 {
+    60
 }
 
 fn default_strong_cutoff() -> f64 {
-    -1.0
+    0.03
 }
 
 fn default_weak_cutoff() -> f64 {
-    1.0
+    0.015
+}
+
+fn default_min_corroborating_signals() -> u32 {
+    2
+}
+
+fn default_semantic_weak_max_distance() -> f32 {
+    0.55
+}
+
+fn default_semantic_strong_max_distance() -> f32 {
+    0.38
+}
+
+/// Wider than `semantic_weak_max_distance` so a dense neighborhood can exist
+/// while the top hit remains beyond the relevance cutoff (high_confidence_gap).
+fn default_density_radius() -> f32 {
+    0.8
+}
+
+fn default_density_min_count() -> u32 {
+    3
+}
+
+/// Between weak and density radii: near a collection centroid but no precise hit.
+fn default_centroid_radius() -> f32 {
+    0.72
+}
+
+impl Default for ThresholdsConfig {
+    fn default() -> Self {
+        Self {
+            rrf_k: default_rrf_k(),
+            strong_cutoff: default_strong_cutoff(),
+            weak_cutoff: default_weak_cutoff(),
+            min_corroborating_signals: default_min_corroborating_signals(),
+            semantic_weak_max_distance: default_semantic_weak_max_distance(),
+            semantic_strong_max_distance: default_semantic_strong_max_distance(),
+            density_radius: default_density_radius(),
+            density_min_count: default_density_min_count(),
+            centroid_radius: default_centroid_radius(),
+        }
+    }
 }
 
 impl Default for Config {
@@ -61,14 +137,12 @@ impl Default for Config {
             providers: ProvidersConfig {
                 embedder: default_embedder(),
                 completer: None,
+                embedding: EmbeddingConfig::default(),
             },
             budgets: BudgetsConfig {
                 default_recall_tokens: default_recall_tokens(),
             },
-            thresholds: ThresholdsConfig {
-                strong_cutoff: default_strong_cutoff(),
-                weak_cutoff: default_weak_cutoff(),
-            },
+            thresholds: ThresholdsConfig::default(),
         }
     }
 }
@@ -113,7 +187,23 @@ mod tests {
         let dir = TempDir::new().unwrap();
         Config::write_default(dir.path()).unwrap();
         let loaded = Config::load(dir.path()).unwrap();
-        assert_eq!(loaded.providers.embedder, "none");
+        assert_eq!(loaded.providers.embedder, "fastembed");
         assert_eq!(loaded.budgets.default_recall_tokens, 2000);
+        assert_eq!(loaded.thresholds.rrf_k, 60);
+        assert_eq!(loaded.thresholds.semantic_weak_max_distance, 0.55);
+        assert_eq!(loaded.thresholds.density_radius, 0.8);
+    }
+
+    #[test]
+    fn default_thresholds_allow_gap_states() {
+        let t = ThresholdsConfig::default();
+        assert!(
+            t.density_radius > t.semantic_weak_max_distance,
+            "density_radius must exceed semantic_weak_max_distance for high_confidence_gap"
+        );
+        assert!(
+            t.centroid_radius > t.semantic_weak_max_distance,
+            "centroid_radius must exceed semantic_weak_max_distance for low_confidence_gap"
+        );
     }
 }

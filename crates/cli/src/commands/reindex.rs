@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use alexandria_core::{Index, Library};
+use alexandria_core::{Config, Index, Library};
 use anyhow::Result;
 
 use crate::OutputFormat;
@@ -10,7 +10,8 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat) -> Result<()> {
         Some(p) => Library::discover(Some(&p))?,
         None => Library::discover(None)?,
     };
-    let index = Index::open(&library)?;
+    let config = Config::load(&library.root)?;
+    let index = Index::open(&library, &config)?;
     let result = index.reindex(&library)?;
 
     match format {

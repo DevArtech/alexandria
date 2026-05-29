@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use commands::{init, recall, remember, reindex};
+use commands::{expand, init, recall, remember, reindex};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
@@ -46,11 +46,17 @@ enum Commands {
         #[arg(long)]
         tag: Vec<String>,
     },
-    /// Hybrid fused retrieval (lexical-only in M1)
+    /// Hybrid fused retrieval (lexical + semantic, RRF fusion)
     Recall {
         query: String,
         #[arg(long)]
         budget: Option<u32>,
+    },
+    /// Expand an engram to full body and linked claims
+    Expand {
+        id: String,
+        #[arg(long)]
+        rel: Option<String>,
     },
     /// Rebuild the SQLite index from Markdown store
     Reindex,
@@ -70,6 +76,7 @@ fn main() -> Result<()> {
         Commands::Recall { query, budget } => {
             recall::run(cli.library, cli.format, query, budget)
         }
+        Commands::Expand { id, rel } => expand::run(cli.library, cli.format, id, rel),
         Commands::Reindex => reindex::run(cli.library, cli.format),
     }
 }

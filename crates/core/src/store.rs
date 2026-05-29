@@ -181,7 +181,7 @@ mod tests {
         assert!(lib.alexandria_dir().is_dir());
         assert!(lib.root.join("semantic").is_dir());
         assert!(lib.root.join("threads").is_dir());
-        assert!(Config::load(dir.path()).unwrap().providers.embedder == "none");
+        assert!(Config::load(dir.path()).unwrap().providers.embedder == "fastembed");
     }
 
     #[test]

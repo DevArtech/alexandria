@@ -45,7 +45,8 @@ pub fn run(
     engram.tags = tags;
 
     let path = library.write_engram(&engram)?;
-    let index = Index::open(&library)?;
+    let config = alexandria_core::Config::load(&library.root)?;
+    let index = Index::open(&library, &config)?;
     index.upsert(&engram, &path.display().to_string())?;
 
     match format {

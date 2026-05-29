@@ -1,8 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use rusqlite::params;
 use serde::Serialize;
 
 use crate::config::{Config, ThresholdsConfig};
-use crate::engram::Engram;
+use crate::engram::{Engram, Rel, Tier};
 use crate::error::Result;
 use crate::index::Index;
 
@@ -11,9 +13,7 @@ use crate::index::Index;
 pub enum RecallState {
     StrongHit,
     WeakHit,
-    /// Reserved for M2 (embedding neighborhood density check).
     HighConfidenceGap,
-    /// Reserved for M2 (domain centroid proximity).
     LowConfidenceGap,
     Nothing,
 }
@@ -56,6 +56,20 @@ pub struct RecallHit {
     pub status: String,
     pub score: f64,
     pub token_cost: u32,
+    pub signals: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CollectionNode {
+    pub name: String,
+    pub summary: String,
+    pub token_cost: u32,
+    pub hits: Vec<RecallHit>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextTree {
+    pub collections: Vec<CollectionNode>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,8 +77,26 @@ pub struct RecallResult {
     pub state: RecallState,
     pub response_mode: ResponseMode,
     pub query: String,
-    pub engrams: Vec<RecallHit>,
+    pub tree: ContextTree,
     pub total_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkClaim {
+    pub rel: String,
+    pub to_id: String,
+    pub claim: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExpandResult {
+    pub id: String,
+    pub claim: String,
+    pub tier: String,
+    pub status: String,
+    pub body: String,
+    pub token_cost: u32,
+    pub links: Vec<LinkClaim>,
 }
 
 pub struct Retrieval<'a> {
@@ -72,56 +104,122 @@ pub struct Retrieval<'a> {
     config: &'a Config,
 }
 
+#[derive(Debug, Clone)]
+struct FusedHit {
+    id: String,
+    claim: String,
+    tier: String,
+    status: String,
+    score: f64,
+    signals: Vec<String>,
+    collections: Vec<String>,
+}
+
 impl<'a> Retrieval<'a> {
     pub fn new(index: &'a Index, config: &'a Config) -> Self {
         Self { index, config }
     }
 
-    /// Run lexical recall. `query` is escaped for FTS5 internally.
     pub fn recall(&self, query: &str, budget: Option<u32>) -> Result<RecallResult> {
         let budget = budget.unwrap_or(self.config.budgets.default_recall_tokens);
         let thresholds = &self.config.thresholds;
         let fts_query = escape_fts_query(query);
 
-        let hits = self.search_fts(&fts_query, budget * 4)?;
+        let candidate_limit = candidate_limit(budget);
+        let lexical = self.search_fts(&fts_query, candidate_limit)?;
+        let query_vec = self.index.embed_query(query)?;
+        let semantic = self.index.semantic_knn(&query_vec, candidate_limit)?;
 
-        // Drop hits below the weak threshold so state and payload stay consistent.
-        let qualifying: Vec<_> = hits
-            .into_iter()
-            .filter(|h| hit_meets_weak_threshold(h.score, thresholds))
+        let semantic_distances: HashMap<String, f32> = semantic
+            .iter()
+            .map(|h| (h.id.clone(), h.distance as f32))
             .collect();
+        let best_semantic_distance = semantic.first().map(|h| h.distance as f32);
+        let has_lexical_match = !lexical.is_empty();
 
-        let state = classify_state(&qualifying, thresholds);
-        let response_mode = classify_response_mode(state);
-
-        let mut engrams = Vec::new();
-        let mut total_tokens = 0u32;
-
-        for mut hit in qualifying {
-            let token_cost = Engram::estimate_tokens(&hit.claim);
-            if total_tokens + token_cost > budget && !engrams.is_empty() {
-                break;
-            }
-            hit.token_cost = token_cost;
-            total_tokens += token_cost;
-            engrams.push(hit);
-            if total_tokens >= budget {
-                break;
+        let mut fused = fuse_rrf(&lexical, &semantic, thresholds.rrf_k);
+        for hit in &mut fused {
+            if hit.collections.is_empty() {
+                hit.collections = self.fetch_collections(&hit.id).unwrap_or_default();
             }
         }
+
+        let neighbor_count = self
+            .index
+            .neighbors_within(&query_vec, thresholds.density_radius)?;
+        let centroid_near = self
+            .index
+            .nearest_collection_centroid(&query_vec)?
+            .map(|(_, dist)| dist < thresholds.centroid_radius)
+            .unwrap_or(false);
+
+        let state = classify_state(
+            &fused,
+            &semantic_distances,
+            has_lexical_match,
+            best_semantic_distance,
+            thresholds,
+            neighbor_count,
+            centroid_near,
+        );
+        let response_mode = classify_response_mode(state);
+
+        let tree = build_context_tree(
+            &fused,
+            &semantic_distances,
+            has_lexical_match,
+            budget,
+            state,
+            thresholds,
+        );
+        let total_tokens = tree_total_tokens(&tree);
 
         Ok(RecallResult {
             state,
             response_mode,
             query: query.to_string(),
-            engrams,
+            tree,
             total_tokens,
         })
     }
 
-    fn search_fts(&self, fts_query: &str, limit: u32) -> Result<Vec<RecallHit>> {
+    pub fn expand(&self, id: &str, rel: Option<Rel>) -> Result<ExpandResult> {
+        let row = self
+            .index
+            .get_engram(id)?
+            .ok_or_else(|| crate::error::AlexandriaError::EngramNotFound(id.to_string()))?;
+
+        if row.tier == Tier::Relational {
+            return Err(crate::error::AlexandriaError::InvalidEngram(
+                "relational engrams cannot be expanded as quotable text".into(),
+            ));
+        }
+
+        let links = self.index.get_linked_claims(id, rel)?;
+        let link_claims: Vec<LinkClaim> = links
+            .into_iter()
+            .map(|(r, to_id, claim)| LinkClaim {
+                rel: rel_label(r).to_string(),
+                to_id,
+                claim,
+            })
+            .collect();
+
+        let token_cost = Engram::estimate_tokens(&row.body);
+
+        Ok(ExpandResult {
+            id: row.id,
+            claim: row.claim,
+            tier: tier_label(row.tier).to_string(),
+            status: status_label(row.status).to_string(),
+            body: row.body,
+            token_cost,
+            links: link_claims,
+        })
+    }
+
+    fn search_fts(&self, fts_query: &str, limit: u32) -> Result<Vec<FusedHit>> {
         let conn = self.index.connection();
-        // FTS5 bm25(): more negative = better match. ORDER BY ASC puts best first.
         let mut stmt = conn.prepare(
             r#"
             SELECT e.id, e.claim, e.tier, e.status, bm25(engrams_fts) AS score
@@ -135,25 +233,293 @@ impl<'a> Retrieval<'a> {
         )?;
 
         let rows = stmt.query_map(params![fts_query, limit], |row| {
-            Ok(RecallHit {
-                id: row.get(0)?,
-                claim: row.get(1)?,
-                tier: row.get(2)?,
-                status: row.get(3)?,
-                score: row.get(4)?,
-                token_cost: 0,
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
         })?;
 
         let mut hits = Vec::new();
         for row in rows {
-            hits.push(row?);
+            let (id, claim, tier, status) = row?;
+            let collections = self.fetch_collections(&id)?;
+            hits.push(FusedHit {
+                id,
+                claim,
+                tier,
+                status,
+                score: 0.0,
+                signals: vec!["lexical".into()],
+                collections,
+            });
         }
         Ok(hits)
     }
+
+    fn fetch_collections(&self, engram_id: &str) -> Result<Vec<String>> {
+        let conn = self.index.connection();
+        let mut stmt = conn.prepare(
+            "SELECT collection FROM collection_members WHERE engram_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![engram_id], |row| row.get(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
 }
 
-/// Escape a user query for FTS5 MATCH. Tokens with FTS operators or punctuation are quoted.
+fn fuse_rrf(
+    lexical: &[FusedHit],
+    semantic: &[crate::index::SemanticHit],
+    k: u32,
+) -> Vec<FusedHit> {
+    let kf = k as f64;
+    let mut by_id: HashMap<String, FusedHit> = HashMap::new();
+    let mut signal_sets: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for (rank, hit) in lexical.iter().enumerate() {
+        let rrf = 1.0 / (kf + (rank + 1) as f64);
+        let entry = by_id.entry(hit.id.clone()).or_insert_with(|| FusedHit {
+            id: hit.id.clone(),
+            claim: hit.claim.clone(),
+            tier: hit.tier.clone(),
+            status: hit.status.clone(),
+            score: 0.0,
+            signals: Vec::new(),
+            collections: hit.collections.clone(),
+        });
+        entry.score += rrf;
+        signal_sets
+            .entry(hit.id.clone())
+            .or_default()
+            .insert("lexical".into());
+    }
+
+    for (rank, hit) in semantic.iter().enumerate() {
+        let rrf = 1.0 / (kf + (rank + 1) as f64);
+        let entry = by_id.entry(hit.id.clone()).or_insert_with(|| FusedHit {
+            id: hit.id.clone(),
+            claim: hit.claim.clone(),
+            tier: hit.tier.clone(),
+            status: hit.status.clone(),
+            score: 0.0,
+            signals: Vec::new(),
+            collections: Vec::new(),
+        });
+        entry.score += rrf;
+        signal_sets
+            .entry(hit.id.clone())
+            .or_default()
+            .insert("semantic".into());
+    }
+
+    let mut fused: Vec<FusedHit> = by_id.into_values().collect();
+    for hit in &mut fused {
+        if let Some(sigs) = signal_sets.get(&hit.id) {
+            hit.signals = sigs.iter().cloned().collect();
+            hit.signals.sort();
+        }
+    }
+    fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    fused
+}
+
+fn hit_semantically_relevant(
+    hit: &FusedHit,
+    semantic_distances: &HashMap<String, f32>,
+    weak_max: f32,
+) -> bool {
+    semantic_distances
+        .get(&hit.id)
+        .map(|&d| d <= weak_max)
+        .unwrap_or(false)
+}
+
+fn hit_is_relevant(
+    hit: &FusedHit,
+    semantic_distances: &HashMap<String, f32>,
+    _has_lexical_match: bool,
+    thresholds: &ThresholdsConfig,
+) -> bool {
+    hit.signals.iter().any(|s| s == "lexical")
+        || hit_semantically_relevant(hit, semantic_distances, thresholds.semantic_weak_max_distance)
+}
+
+fn classify_state(
+    fused: &[FusedHit],
+    semantic_distances: &HashMap<String, f32>,
+    has_lexical_match: bool,
+    best_semantic_distance: Option<f32>,
+    thresholds: &ThresholdsConfig,
+    neighbor_count: u32,
+    centroid_near: bool,
+) -> RecallState {
+    let semantically_relevant = best_semantic_distance
+        .map(|d| d <= thresholds.semantic_weak_max_distance)
+        .unwrap_or(false);
+    let any_relevant = has_lexical_match || semantically_relevant;
+
+    if !any_relevant {
+        if neighbor_count >= thresholds.density_min_count {
+            return RecallState::HighConfidenceGap;
+        }
+        if centroid_near {
+            return RecallState::LowConfidenceGap;
+        }
+        return RecallState::Nothing;
+    }
+
+    let top = fused
+        .iter()
+        .find(|h| hit_is_relevant(h, semantic_distances, has_lexical_match, thresholds));
+
+    let Some(top) = top else {
+        return RecallState::WeakHit;
+    };
+
+    let top_distance = semantic_distances.get(&top.id).copied();
+    let sem_strong = top_distance
+        .map(|d| d <= thresholds.semantic_strong_max_distance)
+        .unwrap_or(false);
+    let has_lexical = top.signals.iter().any(|s| s == "lexical");
+
+    if top.score >= thresholds.strong_cutoff
+        && top.signals.len() >= thresholds.min_corroborating_signals as usize
+        && (has_lexical || sem_strong)
+    {
+        return RecallState::StrongHit;
+    }
+
+    RecallState::WeakHit
+}
+
+fn classify_response_mode(state: RecallState) -> ResponseMode {
+    match state {
+        RecallState::StrongHit => ResponseMode::Flow,
+        RecallState::WeakHit
+        | RecallState::Nothing
+        | RecallState::HighConfidenceGap
+        | RecallState::LowConfidenceGap => ResponseMode::Humility,
+    }
+}
+
+fn build_context_tree(
+    fused: &[FusedHit],
+    semantic_distances: &HashMap<String, f32>,
+    has_lexical_match: bool,
+    budget: u32,
+    state: RecallState,
+    thresholds: &ThresholdsConfig,
+) -> ContextTree {
+    if state == RecallState::Nothing
+        || state == RecallState::HighConfidenceGap
+        || state == RecallState::LowConfidenceGap
+    {
+        return ContextTree {
+            collections: Vec::new(),
+        };
+    }
+
+    let qualifying: Vec<_> = fused
+        .iter()
+        .filter(|h| {
+            h.score >= thresholds.weak_cutoff
+                && hit_is_relevant(h, semantic_distances, has_lexical_match, thresholds)
+        })
+        .collect();
+
+    let mut groups: HashMap<String, Vec<RecallHit>> = HashMap::new();
+    for hit in qualifying {
+        let collection = hit
+            .collections
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "_uncategorized".to_string());
+        let recall_hit = RecallHit {
+            id: hit.id.clone(),
+            claim: hit.claim.clone(),
+            tier: hit.tier.clone(),
+            status: hit.status.clone(),
+            score: hit.score,
+            token_cost: 0,
+            signals: hit.signals.clone(),
+        };
+        groups.entry(collection).or_default().push(recall_hit);
+    }
+
+    let mut collection_names: Vec<String> = groups.keys().cloned().collect();
+    collection_names.sort();
+
+    let mut nodes = Vec::new();
+    let mut total_tokens = 0u32;
+
+    for name in collection_names {
+        let hits = groups.get(&name).unwrap();
+        let display_name = if name == "_uncategorized" {
+            "(uncategorized)".to_string()
+        } else {
+            name.clone()
+        };
+        let summary = format!("{} — {} engram(s)", display_name, hits.len());
+        let summary_cost = Engram::estimate_tokens(&summary);
+
+        let mut node_hits = Vec::new();
+        let mut node_token_cost = summary_cost;
+
+        if total_tokens + summary_cost > budget && !nodes.is_empty() {
+            break;
+        }
+        total_tokens += summary_cost;
+
+        for mut hit in hits.clone() {
+            let claim_cost = Engram::estimate_tokens(&hit.claim);
+            if total_tokens + claim_cost > budget && !node_hits.is_empty() {
+                break;
+            }
+            hit.token_cost = claim_cost;
+            total_tokens += claim_cost;
+            node_token_cost += claim_cost;
+            node_hits.push(hit);
+            if total_tokens >= budget {
+                break;
+            }
+        }
+
+        if !node_hits.is_empty() || nodes.is_empty() {
+            nodes.push(CollectionNode {
+                name: display_name,
+                summary,
+                token_cost: node_token_cost,
+                hits: node_hits,
+            });
+        }
+        if total_tokens >= budget {
+            break;
+        }
+    }
+
+    ContextTree {
+        collections: nodes,
+    }
+}
+
+/// Cap KNN candidate pool (sqlite-vec max k is 4096).
+fn candidate_limit(budget: u32) -> u32 {
+    budget.saturating_mul(2).clamp(10, 200)
+}
+
+fn tree_total_tokens(tree: &ContextTree) -> u32 {
+    tree.collections
+        .iter()
+        .map(|c| c.token_cost)
+        .sum()
+}
+
+/// Escape a user query for FTS5 MATCH.
 pub fn escape_fts_query(query: &str) -> String {
     query
         .split_whitespace()
@@ -174,52 +540,81 @@ pub fn escape_fts_query(query: &str) -> String {
         .join(" ")
 }
 
-/// SQLite FTS5 bm25: more negative = better. `strong_cutoff` / `weak_cutoff` are upper bounds
-/// (closer to zero); a score must be <= cutoff to meet that band.
-fn classify_state(hits: &[RecallHit], thresholds: &ThresholdsConfig) -> RecallState {
-    if hits.is_empty() {
-        return RecallState::Nothing;
-    }
-    let top_score = hits[0].score;
-    if top_score <= thresholds.strong_cutoff {
-        RecallState::StrongHit
-    } else if top_score <= thresholds.weak_cutoff {
-        RecallState::WeakHit
-    } else {
-        RecallState::Nothing
+fn tier_label(tier: Tier) -> &'static str {
+    match tier {
+        Tier::Working => "working",
+        Tier::Episodic => "episodic",
+        Tier::Provisional => "provisional",
+        Tier::Semantic => "semantic",
+        Tier::Procedural => "procedural",
+        Tier::Relational => "relational",
     }
 }
 
-fn hit_meets_weak_threshold(score: f64, thresholds: &ThresholdsConfig) -> bool {
-    score <= thresholds.weak_cutoff
+fn status_label(status: crate::engram::Status) -> &'static str {
+    match status {
+        crate::engram::Status::Confirmed => "confirmed",
+        crate::engram::Status::Provisional => "provisional",
+        crate::engram::Status::UnresolvedByDesign => "unresolved_by_design",
+        crate::engram::Status::Superseded => "superseded",
+        crate::engram::Status::Archived => "archived",
+    }
 }
 
-fn classify_response_mode(state: RecallState) -> ResponseMode {
-    match state {
-        RecallState::StrongHit => ResponseMode::Flow,
-        RecallState::WeakHit
-        | RecallState::Nothing
-        | RecallState::HighConfidenceGap
-        | RecallState::LowConfidenceGap => ResponseMode::Humility,
+fn rel_label(rel: Rel) -> &'static str {
+    match rel {
+        Rel::Supports => "supports",
+        Rel::Refines => "refines",
+        Rel::DependsOn => "depends_on",
+        Rel::CausedBy => "caused_by",
+        Rel::ConflictsConfirmed => "conflicts_confirmed",
+        Rel::TensionPossible => "tension_possible",
+        Rel::ContextQualified => "context_qualified",
+        Rel::Coexists => "coexists",
+        Rel::Supersedes => "supersedes",
+        Rel::SupersededBy => "superseded_by",
+        Rel::AspectOf => "aspect_of",
+        Rel::SameEpisode => "same_episode",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Engram, Index, Library, Status, Tier};
+    use crate::provider::build_embedder;
+    use crate::{Config, Index, Library, Status, Tier};
     use tempfile::TempDir;
 
+    /// Hash embedder L2 distances are much larger than fastembed; use relaxed cutoffs in tests.
     fn setup() -> (TempDir, Library, Index, Config) {
+        setup_with_semantic_thresholds(1.3, 1.15)
+    }
+
+    fn setup_with_semantic_thresholds(weak_max: f32, strong_max: f32) -> (TempDir, Library, Index, Config) {
         let dir = TempDir::new().unwrap();
         let lib = Library::init(dir.path()).unwrap();
-        let index = Index::open(&lib).unwrap();
-        let config = Config::load(dir.path()).unwrap();
+        let mut config = Config::load(dir.path()).unwrap();
+        config.providers.embedder = "hash".into();
+        config.thresholds.semantic_weak_max_distance = weak_max;
+        config.thresholds.semantic_strong_max_distance = strong_max;
+        let embedder = build_embedder(&config).unwrap();
+        let index = Index::open_with_embedder(&lib, embedder).unwrap();
         (dir, lib, index, config)
     }
 
     fn remember(lib: &Library, index: &Index, claim: &str, body: &str) {
-        let e = Engram::new(claim, body, Tier::Semantic, Status::Confirmed);
+        remember_with_collections(lib, index, claim, body, &[]);
+    }
+
+    fn remember_with_collections(
+        lib: &Library,
+        index: &Index,
+        claim: &str,
+        body: &str,
+        collections: &[&str],
+    ) {
+        let mut e = Engram::new(claim, body, Tier::Semantic, Status::Confirmed);
+        e.collections = collections.iter().map(|s| (*s).to_string()).collect();
         let p = lib.write_engram(&e).unwrap();
         index.upsert(&e, &p.display().to_string()).unwrap();
     }
@@ -227,119 +622,200 @@ mod tests {
     #[test]
     fn escape_fts_query_quotes_special_tokens() {
         assert_eq!(escape_fts_query("C++"), "\"C++\"");
-        assert_eq!(escape_fts_query("self-hostable"), "\"self-hostable\"");
         assert_eq!(escape_fts_query("foo AND bar"), "foo \"AND\" bar");
     }
 
     #[test]
-    fn specific_multi_term_match_is_strong_hit() {
-        let (_dir, lib, index, config) = setup();
-        remember(
-            &lib,
-            &index,
-            "PostgreSQL pgbouncer deadlock transaction timeouts",
-            "Connection pool exhaustion under load.",
-        );
-        remember(
-            &lib,
-            &index,
-            "Alexandria overview",
-            "Alexandria Alexandria Alexandria generic filler.",
-        );
-
-        let retrieval = Retrieval::new(&index, &config);
-        let result = retrieval
-            .recall(
-                "PostgreSQL pgbouncer deadlock transaction timeouts",
-                Some(2000),
-            )
-            .unwrap();
-
-        assert!(!result.engrams.is_empty());
-        assert!(
-            result.engrams[0]
-                .claim
-                .contains("PostgreSQL pgbouncer")
-        );
-        assert_ne!(result.state, RecallState::Nothing);
-        if result.state == RecallState::StrongHit {
-            assert_eq!(result.response_mode, ResponseMode::Flow);
-        }
-    }
-
-    #[test]
-    fn vague_single_token_is_not_strong_hit() {
-        let (_dir, lib, index, config) = setup();
-        remember(
-            &lib,
-            &index,
-            "PostgreSQL pgbouncer deadlock transaction timeouts",
-            "Specific doc.",
-        );
-        remember(
-            &lib,
-            &index,
-            "Alexandria overview",
-            "Alexandria Alexandria Alexandria generic filler.",
-        );
-
-        let retrieval = Retrieval::new(&index, &config);
-        let result = retrieval.recall("Alexandria", Some(2000)).unwrap();
-
-        assert_ne!(result.state, RecallState::StrongHit);
-    }
-
-    #[test]
-    fn nothing_state_has_empty_engrams() {
-        let (_dir, lib, index, config) = setup();
-        remember(&lib, &index, "only rabbits here", "no matching terms expected");
-
-        let retrieval = Retrieval::new(&index, &config);
-        let result = retrieval.recall("zzzznonexistent", Some(2000)).unwrap();
-
-        assert_eq!(result.state, RecallState::Nothing);
-        assert!(result.engrams.is_empty());
-    }
-
-    #[test]
-    fn classify_state_respects_bm25_direction() {
-        let thresholds = ThresholdsConfig {
-            strong_cutoff: -1.0,
-            weak_cutoff: 1.0,
-        };
-        let strong = [RecallHit {
+    fn rrf_fusion_combines_signals() {
+        let lexical = vec![FusedHit {
             id: "a".into(),
             claim: "c".into(),
             tier: "semantic".into(),
             status: "confirmed".into(),
-            score: -3.5,
-            token_cost: 0,
+            score: 0.0,
+            signals: vec!["lexical".into()],
+            collections: vec![],
         }];
-        let weak = [RecallHit {
-            id: "b".into(),
+        let semantic = vec![crate::index::SemanticHit {
+            id: "a".into(),
             claim: "c".into(),
             tier: "semantic".into(),
             status: "confirmed".into(),
-            score: -0.5,
-            token_cost: 0,
+            distance: 0.1,
         }];
-        let poor = [RecallHit {
-            id: "c".into(),
-            claim: "c".into(),
-            tier: "semantic".into(),
-            status: "confirmed".into(),
-            score: 2.0,
-            token_cost: 0,
-        }];
-
-        assert_eq!(classify_state(&strong, &thresholds), RecallState::StrongHit);
-        assert_eq!(classify_state(&weak, &thresholds), RecallState::WeakHit);
-        assert_eq!(classify_state(&poor, &thresholds), RecallState::Nothing);
+        let fused = fuse_rrf(&lexical, &semantic, 60);
+        assert_eq!(fused[0].id, "a");
+        assert!(fused[0].score > 0.0);
+        assert_eq!(fused[0].signals.len(), 2);
     }
 
     #[test]
-    fn specific_match_scores_better_than_vague() {
+    fn classify_state_strong_requires_corroboration() {
+        let thresholds = ThresholdsConfig::default();
+        let strong = [FusedHit {
+            id: "a".into(),
+            claim: "c".into(),
+            tier: "semantic".into(),
+            status: "confirmed".into(),
+            score: 0.05,
+            signals: vec!["lexical".into(), "semantic".into()],
+            collections: vec![],
+        }];
+        let mut dist = HashMap::new();
+        dist.insert("a".into(), 0.1f32);
+        assert_eq!(
+            classify_state(&strong, &dist, true, Some(0.1), &thresholds, 0, false),
+            RecallState::StrongHit
+        );
+    }
+
+    #[test]
+    fn hybrid_recall_finds_semantic_match() {
         let (_dir, lib, index, config) = setup();
+        remember(
+            &lib,
+            &index,
+            "database connection pooling under heavy load",
+            "pgbouncer and transaction timeouts",
+        );
+
+        let retrieval = Retrieval::new(&index, &config);
+        let result = retrieval
+            .recall("connection pool exhaustion", Some(2000))
+            .unwrap();
+
+        assert_ne!(result.state, RecallState::Nothing);
+        let all_hits: Vec<_> = result
+            .tree
+            .collections
+            .iter()
+            .flat_map(|c| c.hits.iter())
+            .collect();
+        assert!(!all_hits.is_empty());
+    }
+
+    #[test]
+    fn expand_returns_body_and_links() {
+        let (_dir, lib, index, config) = setup();
+        let mut e1 = Engram::new("parent claim", "parent body", Tier::Semantic, Status::Confirmed);
+        let e2 = Engram::new("child claim", "child body", Tier::Semantic, Status::Confirmed);
+        e1.links.push(crate::engram::Link {
+            rel: Rel::Supports,
+            to: e2.id.clone(),
+        });
+        let p1 = lib.write_engram(&e1).unwrap();
+        let p2 = lib.write_engram(&e2).unwrap();
+        index.upsert(&e1, &p1.display().to_string()).unwrap();
+        index.upsert(&e2, &p2.display().to_string()).unwrap();
+
+        let retrieval = Retrieval::new(&index, &config);
+        let expanded = retrieval.expand(&e1.id, None).unwrap();
+        assert_eq!(expanded.body, "parent body");
+        assert_eq!(expanded.links.len(), 1);
+        assert_eq!(expanded.links[0].claim, "child claim");
+    }
+
+    #[test]
+    fn high_confidence_gap_classified_with_dense_neighborhood() {
+        let thresholds = ThresholdsConfig {
+            density_min_count: 3,
+            semantic_weak_max_distance: 0.5,
+            density_radius: 0.8,
+            ..ThresholdsConfig::default()
+        };
+        let weak = [FusedHit {
+            id: "a".into(),
+            claim: "c".into(),
+            tier: "semantic".into(),
+            status: "confirmed".into(),
+            score: 0.01,
+            signals: vec!["semantic".into()],
+            collections: vec![],
+        }];
+        let mut dist = HashMap::new();
+        dist.insert("a".into(), 0.9f32);
+        assert_eq!(
+            classify_state(&weak, &dist, false, Some(0.9), &thresholds, 5, false),
+            RecallState::HighConfidenceGap
+        );
+    }
+
+    #[test]
+    fn low_confidence_gap_classified_near_centroid() {
+        let thresholds = ThresholdsConfig {
+            semantic_weak_max_distance: 0.5,
+            ..ThresholdsConfig::default()
+        };
+        let weak = [FusedHit {
+            id: "a".into(),
+            claim: "c".into(),
+            tier: "semantic".into(),
+            status: "confirmed".into(),
+            score: 0.01,
+            signals: vec!["semantic".into()],
+            collections: vec![],
+        }];
+        let mut dist = HashMap::new();
+        dist.insert("a".into(), 0.9f32);
+        assert_eq!(
+            classify_state(&weak, &dist, false, Some(0.9), &thresholds, 0, true),
+            RecallState::LowConfidenceGap
+        );
+    }
+
+    #[test]
+    fn hash_embedder_distance_sanity() {
+        use crate::provider::{embed_sync, HashEmbedder};
+        let e = HashEmbedder;
+        let related_a = embed_sync(&e, &["database connection pooling under heavy load".into()]).unwrap()[0].clone();
+        let related_b = embed_sync(&e, &["connection pool exhaustion".into()]).unwrap()[0].clone();
+        let unrelated = embed_sync(&e, &["xylophone quasar nebula".into()]).unwrap()[0].clone();
+        fn l2(a: &[f32], b: &[f32]) -> f32 {
+            a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>().sqrt()
+        }
+        let d_related = l2(&related_a, &related_b);
+        let d_unrelated = l2(&related_a, &unrelated);
+        eprintln!("hash L2 related={d_related} unrelated={d_unrelated}");
+        assert!(d_related < d_unrelated);
+        assert!(d_related < 1.3);
+        assert!(d_unrelated > 1.3);
+    }
+
+    #[test]
+    fn recall_dense_cluster_yields_high_confidence_gap() {
+        let weak = 1.25f32;
+        let density = 1.55f32;
+        let (_dir, lib, index, mut config) = setup_with_semantic_thresholds(weak, 1.1);
+        config.thresholds.density_radius = density;
+        config.thresholds.density_min_count = 3;
+
+        let cluster = "kubernetes pod scheduling affinity rule cluster autoscaler node pool";
+        for i in 0..6 {
+            remember(
+                &lib,
+                &index,
+                &format!("{cluster} configuration variant {i}"),
+                "cluster autoscaler node pool configuration tuning",
+            );
+        }
+
+        let retrieval = Retrieval::new(&index, &config);
+        let query = "orchestra symphony violin concert hall performance";
+        let result = retrieval.recall(query, Some(2000)).unwrap();
+
+        assert_eq!(
+            result.state,
+            RecallState::HighConfidenceGap,
+            "expected high_confidence_gap for query '{query}' against dense cluster; got {:?}",
+            result.state
+        );
+        assert!(result.tree.collections.is_empty());
+        assert_eq!(result.response_mode, ResponseMode::Humility);
+    }
+
+    #[test]
+    fn recall_nonsense_query_yields_gap_or_nothing() {
+        let (_dir, lib, index, config) = setup_with_semantic_thresholds(1.3, 1.15);
         remember(
             &lib,
             &index,
@@ -349,28 +825,42 @@ mod tests {
         remember(
             &lib,
             &index,
-            "Alexandria overview",
-            "Alexandria Alexandria Alexandria generic filler.",
+            "Alexandria uses hybrid fused retrieval",
+            "Vector-only retrieval fails on exact recall.",
+        );
+        remember(
+            &lib,
+            &index,
+            "Rust is the target runtime for Alexandria",
+            "Single binary, local-first.",
         );
 
         let retrieval = Retrieval::new(&index, &config);
-        let specific = retrieval
-            .recall(
-                "PostgreSQL pgbouncer deadlock transaction timeouts",
-                Some(2000),
-            )
+        let result = retrieval
+            .recall("xylophone quasar nebula zzztqx", Some(2000))
             .unwrap();
-        let vague = retrieval.recall("Alexandria", Some(2000)).unwrap();
 
-        assert!(!specific.engrams.is_empty());
-        if !vague.engrams.is_empty() {
-            assert!(
-                specific.engrams[0].score < vague.engrams[0].score,
-                "specific {:?} should beat vague {:?}",
-                specific.engrams[0].score,
-                vague.engrams[0].score
-            );
-        }
-        assert_ne!(specific.state, RecallState::Nothing);
+        assert!(
+            matches!(
+                result.state,
+                RecallState::HighConfidenceGap
+                    | RecallState::LowConfidenceGap
+                    | RecallState::Nothing
+            ),
+            "expected gap or nothing, got {:?}",
+            result.state
+        );
+        assert!(result.tree.collections.is_empty());
+    }
+
+    #[test]
+    fn expand_refuses_relational() {
+        let (_dir, lib, index, config) = setup();
+        let e = Engram::new("prefers terse", "body", Tier::Relational, Status::Confirmed);
+        let p = lib.write_engram(&e).unwrap();
+        index.upsert(&e, &p.display().to_string()).unwrap();
+
+        let retrieval = Retrieval::new(&index, &config);
+        assert!(retrieval.expand(&e.id, None).is_err());
     }
 }

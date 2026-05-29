@@ -9,6 +9,10 @@ pub mod store;
 pub use config::Config;
 pub use engram::{Engram, Rel, Status, Tier};
 pub use error::{AlexandriaError, Result};
-pub use index::{Index, ReindexResult};
-pub use retrieval::{escape_fts_query, RecallResult, RecallState, ResponseMode, Retrieval};
+pub use index::{EngramRow, Index, ReindexResult, SemanticHit};
+pub use provider::{build_embedder, embed_sync, Embedder, HashEmbedder};
+pub use retrieval::{
+    escape_fts_query, CollectionNode, ContextTree, ExpandResult, RecallHit, RecallResult,
+    RecallState, ResponseMode, Retrieval,
+};
 pub use store::{Library, ParseFailure, ScanResult};

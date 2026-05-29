@@ -22,7 +22,7 @@ The full design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status
 
-Alexandria is under active construction. **Milestone 1 (skeleton) is implemented:** the plain-text store, the SQLite + FTS5 index, lexical recall with the five-state return type and response-mode plumbing, and rebuild-from-text. Semantic search, the graph/conflict layer, consolidation, and the provider integrations are planned (see [Roadmap](#roadmap)).
+Alexandria is under active construction. **Milestone 2 (hybrid retrieval) is implemented:** local embeddings (`fastembed` default, `hash` for offline/tests), `sqlite-vec` semantic search, RRF fusion of lexical + semantic signals, all five recall states (including density-based gap states), progressive-disclosure context trees with token budgets, and the `expand` verb. The graph/conflict layer, consolidation, and full provider integrations are planned (see [Roadmap](#roadmap)).
 
 ## Build
 
@@ -57,11 +57,15 @@ cat notes.md | alexandria remember -
 alexandria remember "The user prefers terse answers" --tier relational
 alexandria remember "Auth flow uses short-lived JWTs" --collection project-x --tag auth
 
-# 3. Recall (lexical search in M1) with a token budget
+# 3. Recall (hybrid lexical + semantic, RRF fusion) with a token budget
 alexandria recall "hybrid retrieval"
 alexandria recall "auth jwt" --budget 1500 --format json
 
-# 4. Rebuild the index entirely from the Markdown store
+# 4. Expand a hit to full body and linked claims
+alexandria expand eng_7f3a2c
+alexandria expand eng_7f3a2c --rel depends_on --format json
+
+# 5. Rebuild the index entirely from the Markdown store
 alexandria reindex
 ```
 
@@ -75,8 +79,8 @@ Rather than always returning rows, `recall` classifies the result so an agent ca
 | --- | --- |
 | `strong_hit` | High-confidence, discriminating match |
 | `weak_hit` | Something matched, but low confidence — hedge |
-| `high_confidence_gap` | Relevant memory likely exists but can't be surfaced cleanly *(planned, M2)* |
-| `low_confidence_gap` | Topic is adjacent to known domains; nothing precise *(planned, M2)* |
+| `high_confidence_gap` | Relevant memory likely exists but can't be surfaced cleanly |
+| `low_confidence_gap` | Topic is adjacent to known domains; nothing precise |
 | `nothing` | No meaningful signal |
 
 Each result also carries a recommended **response mode** (`flow` / `humility` / `audit`) so the agent knows whether to use memory invisibly, flag its uncertainty, or expose the full provenance.
@@ -119,24 +123,36 @@ A library is just a directory — `git init` it for free time-travel over your m
 
 ```toml
 [providers]
-embedder = "none"          # "fastembed" (local), "ollama", "openai" — planned
+embedder = "fastembed"     # "fastembed" (local), "hash" (offline/tests), "none" (disabled)
+
+[providers.embedding]
+# model = "BGESmallENV15"  # fastembed model id
 
 [budgets]
 default_recall_tokens = 2000
 
 [thresholds]
-strong_cutoff = -3.0       # BM25 bands for the five-state classifier
-weak_cutoff = -8.0
+rrf_k = 60
+strong_cutoff = 0.03                  # fused RRF score bands among distance-qualified hits
+weak_cutoff = 0.015
+min_corroborating_signals = 2         # signals (lexical + semantic) required for strong_hit
+semantic_weak_max_distance = 0.55     # max L2 distance to count as a (weak) semantic match
+semantic_strong_max_distance = 0.38   # tighter distance required to reach strong_hit
+density_radius = 0.8                  # neighborhood shell for high_confidence_gap
+density_min_count = 3                 # min neighbors in that shell to call it "dense"
+centroid_radius = 0.72                # near-a-collection band for low_confidence_gap
 ```
+
+The distance thresholds are L2 distances in embedding space and **must be tuned per embedder** — the values above are oriented to `fastembed`; the `hash` embedder's distances are much larger, so its tests scale these up (roughly `weak ≈ 1.25`, `centroid ≈ 1.4`, `density ≈ 1.55`). For the gap states to be reachable, the radii must keep the ordering **relevance shell < centroid band < density shell** (`semantic_weak_max_distance < centroid_radius < density_radius`); otherwise a query can never be "far from any clean hit yet inside a dense neighborhood."
 
 ## Architecture
 
 Alexandria is a Rust workspace:
 
-- `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5), `retrieval` (five-state recall), `provider` traits (`Embedder` / `Completer`), `config`, `engram`.
+- `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5 + sqlite-vec), `retrieval` (hybrid RRF + five-state recall + context tree), `provider` (`Embedder` / `Completer`), `config`, `engram`.
 - `crates/cli` — the `alexandria` binary (built on `clap`).
 
-Embeddings and LLM calls sit behind pluggable provider traits with a local-first default, so the system can run fully offline.
+Embeddings and LLM calls sit behind pluggable provider traits with a local-first default. The default `fastembed` provider downloads an ONNX model on first use (~130MB); set `embedder = "hash"` in config for fully offline operation (no semantic quality guarantees). `expand` does not load the embedder.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, including hybrid retrieval, progressive disclosure, consolidation, the conflict taxonomy, meta-memory, and response modes.
 
@@ -145,7 +161,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, includ
 | Milestone | Scope |
 | --- | --- |
 | **M1 — Skeleton** ✅ | Plain-text store, SQLite + FTS5 index, `init`/`remember`/`recall` (lexical)/`reindex`, five-state recall + response modes |
-| **M2 — Hybrid + budget** | Local embeddings (`fastembed`), semantic search, RRF fusion, density-based gap states, progressive-disclosure context tree, `expand` |
+| **M2 — Hybrid + budget** ✅ | Local embeddings (`fastembed` + `hash` for tests), semantic search, RRF fusion, density-based gap states, progressive-disclosure context tree, `expand` |
 | **M3 — Graph + consolidation** | Typed edges + traversal, conflict taxonomy, provisional promotion ladder, `link`/`trace`/`timeline`, the `reflect`/`consolidate` "sleep" pass |
 | **M4 — Relational, shape, meta-memory, modes** | Relational `style` channel, episodic shape index, meta-memory, fast/slow reflection, open-thread surfacing |
 | **M5 — Providers & polish** | Ollama + cloud providers, reranker, threshold self-calibration |

@@ -16,7 +16,7 @@ pub fn run(
         None => Library::discover(None)?,
     };
     let config = Config::load(&library.root)?;
-    let index = Index::open(&library)?;
+    let index = Index::open(&library, &config)?;
     let retrieval = Retrieval::new(&index, &config);
     let result = retrieval.recall(&query, budget)?;
 
@@ -31,14 +31,22 @@ fn print_human(result: &alexandria_core::RecallResult) {
     println!("state: {}", result.state.as_str());
     println!("response_mode: {}", result.response_mode.as_str());
     println!("total_tokens: {}", result.total_tokens);
-    if result.engrams.is_empty() {
+    if result.tree.collections.is_empty() {
         println!("(no matches)");
         return;
     }
-    for hit in &result.engrams {
-        println!(
-            "  [{}] {} (score: {:.2}, ~{} tokens)",
-            hit.id, hit.claim, hit.score, hit.token_cost
-        );
+    for collection in &result.tree.collections {
+        println!();
+        println!("## {}", collection.summary);
+        for hit in &collection.hits {
+            println!(
+                "  [{}] {} (score: {:.4}, ~{} tokens, signals: {})",
+                hit.id,
+                hit.claim,
+                hit.score,
+                hit.token_cost,
+                hit.signals.join("+")
+            );
+        }
     }
 }
