@@ -8,6 +8,25 @@ use crate::engram::{Engram, Rel, Tier};
 use crate::error::Result;
 use crate::graph::compute_effective_confidence;
 use crate::index::Index;
+/// Options that influence response-mode selection on `recall`.
+#[derive(Debug, Clone, Default)]
+pub struct RecallOptions {
+    pub audit: bool,
+    pub high_stakes: bool,
+    /// Domain for meta-memory lookup (first collection when None).
+    pub domain: Option<String>,
+}
+
+/// Inputs to the rule-based posture judge (ARCHITECTURE §10.1).
+#[derive(Debug, Clone)]
+struct PostureInputs {
+    state: RecallState,
+    has_provisional: bool,
+    has_conflict_edges: bool,
+    audit_requested: bool,
+    high_stakes: bool,
+    meta_reliability_weak: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -125,7 +144,12 @@ impl<'a> Retrieval<'a> {
         Self { index, config }
     }
 
-    pub fn recall(&self, query: &str, budget: Option<u32>) -> Result<RecallResult> {
+    pub fn recall(
+        &self,
+        query: &str,
+        budget: Option<u32>,
+        options: RecallOptions,
+    ) -> Result<RecallResult> {
         let budget = budget.unwrap_or(self.config.budgets.default_recall_tokens);
         let thresholds = &self.config.thresholds;
         let fts_query = escape_fts_query(query);
@@ -135,6 +159,12 @@ impl<'a> Retrieval<'a> {
         let query_vec = self.index.embed_query(query)?;
         let semantic = self.index.semantic_knn(&query_vec, candidate_limit)?;
 
+        let shape_hits = if self.config.shape.enabled {
+            self.search_shape(&query_vec, candidate_limit)?
+        } else {
+            Vec::new()
+        };
+
         let semantic_distances: HashMap<String, f32> = semantic
             .iter()
             .map(|h| (h.id.clone(), h.distance as f32))
@@ -142,7 +172,23 @@ impl<'a> Retrieval<'a> {
         let best_semantic_distance = semantic.first().map(|h| h.distance as f32);
         let has_lexical_match = !lexical.is_empty();
 
-        let mut fused = fuse_rrf(&lexical, &semantic, thresholds.rrf_k);
+        let shape_weight = self.config.shape.weight;
+        let mut fused = fuse_rrf_multi(
+            &[
+                ("lexical", 1.0, lexical_to_rrf_entries(&lexical)),
+                (
+                    "semantic",
+                    1.0,
+                    semantic_to_rrf_entries(&semantic),
+                ),
+                (
+                    "shape",
+                    shape_weight,
+                    shape_to_rrf_entries(&shape_hits),
+                ),
+            ],
+            thresholds.rrf_k,
+        );
         for hit in &mut fused {
             if hit.collections.is_empty() {
                 hit.collections = self.fetch_collections(&hit.id).unwrap_or_default();
@@ -167,7 +213,33 @@ impl<'a> Retrieval<'a> {
             neighbor_count,
             centroid_near,
         );
-        let response_mode = classify_response_mode(state);
+
+        let fused_ids: Vec<String> = fused.iter().map(|h| h.id.clone()).collect();
+        let fused_statuses: Vec<(String, String)> = fused
+            .iter()
+            .map(|h| (h.id.clone(), h.status.clone()))
+            .collect();
+        let domain = options.domain.clone().or_else(|| {
+            fused
+                .first()
+                .and_then(|h| h.collections.first().cloned())
+        });
+        let meta_weak = match &domain {
+            Some(d) => {
+                self.index.meta_reliability(Some(d.as_str()))?
+                    < self.config.posture.meta_reliability_threshold
+            }
+            None => false,
+        };
+
+        let response_mode = judge_posture(PostureInputs {
+            state,
+            has_provisional: fused_has_provisional(&fused_statuses),
+            has_conflict_edges: self.index.has_conflict_edges_among(&fused_ids)?,
+            audit_requested: options.audit,
+            high_stakes: options.high_stakes,
+            meta_reliability_weak: meta_weak,
+        });
 
         let tree = build_context_tree(
             self.index,
@@ -318,51 +390,89 @@ impl<'a> Retrieval<'a> {
         }
         Ok(out)
     }
+
+    fn search_shape(
+        &self,
+        query_vec: &[f32],
+        limit: u32,
+    ) -> Result<Vec<crate::index::SemanticHit>> {
+        let hits = self.index.shape_knn(query_vec, limit)?;
+        let max_dist = self.config.shape.max_distance;
+        Ok(hits
+            .into_iter()
+            .filter(|h| (h.distance as f32) <= max_dist)
+            .collect())
+    }
 }
 
-fn fuse_rrf(
-    lexical: &[FusedHit],
-    semantic: &[crate::index::SemanticHit],
+#[derive(Debug, Clone)]
+struct RrfEntry {
+    id: String,
+    claim: String,
+    tier: String,
+    status: String,
+    collections: Vec<String>,
+}
+
+fn lexical_to_rrf_entries(lexical: &[FusedHit]) -> Vec<RrfEntry> {
+    lexical
+        .iter()
+        .map(|h| RrfEntry {
+            id: h.id.clone(),
+            claim: h.claim.clone(),
+            tier: h.tier.clone(),
+            status: h.status.clone(),
+            collections: h.collections.clone(),
+        })
+        .collect()
+}
+
+fn semantic_to_rrf_entries(semantic: &[crate::index::SemanticHit]) -> Vec<RrfEntry> {
+    semantic
+        .iter()
+        .map(|h| RrfEntry {
+            id: h.id.clone(),
+            claim: h.claim.clone(),
+            tier: h.tier.clone(),
+            status: h.status.clone(),
+            collections: Vec::new(),
+        })
+        .collect()
+}
+
+fn shape_to_rrf_entries(shape: &[crate::index::SemanticHit]) -> Vec<RrfEntry> {
+    semantic_to_rrf_entries(shape)
+}
+
+fn fuse_rrf_multi(
+    lists: &[(&str, f64, Vec<RrfEntry>)],
     k: u32,
 ) -> Vec<FusedHit> {
     let kf = k as f64;
     let mut by_id: HashMap<String, FusedHit> = HashMap::new();
     let mut signal_sets: HashMap<String, HashSet<String>> = HashMap::new();
 
-    for (rank, hit) in lexical.iter().enumerate() {
-        let rrf = 1.0 / (kf + (rank + 1) as f64);
-        let entry = by_id.entry(hit.id.clone()).or_insert_with(|| FusedHit {
-            id: hit.id.clone(),
-            claim: hit.claim.clone(),
-            tier: hit.tier.clone(),
-            status: hit.status.clone(),
-            score: 0.0,
-            signals: Vec::new(),
-            collections: hit.collections.clone(),
-        });
-        entry.score += rrf;
-        signal_sets
-            .entry(hit.id.clone())
-            .or_default()
-            .insert("lexical".into());
-    }
-
-    for (rank, hit) in semantic.iter().enumerate() {
-        let rrf = 1.0 / (kf + (rank + 1) as f64);
-        let entry = by_id.entry(hit.id.clone()).or_insert_with(|| FusedHit {
-            id: hit.id.clone(),
-            claim: hit.claim.clone(),
-            tier: hit.tier.clone(),
-            status: hit.status.clone(),
-            score: 0.0,
-            signals: Vec::new(),
-            collections: Vec::new(),
-        });
-        entry.score += rrf;
-        signal_sets
-            .entry(hit.id.clone())
-            .or_default()
-            .insert("semantic".into());
+    for (signal, weight, entries) in lists {
+        if entries.is_empty() || *weight <= 0.0 {
+            continue;
+        }
+        for (rank, hit) in entries.iter().enumerate() {
+            let rrf = weight * (1.0 / (kf + (rank + 1) as f64));
+            let entry = by_id.entry(hit.id.clone()).or_insert_with(|| FusedHit {
+                id: hit.id.clone(),
+                claim: hit.claim.clone(),
+                tier: hit.tier.clone(),
+                status: hit.status.clone(),
+                score: 0.0,
+                signals: Vec::new(),
+                collections: hit.collections.clone(),
+            });
+            entry.score += rrf;
+            signal_sets
+                .entry(hit.id.clone())
+                .or_default()
+                .insert(signal.to_string());
+        }
     }
 
     let mut fused: Vec<FusedHit> = by_id.into_values().collect();
@@ -374,6 +484,22 @@ fn fuse_rrf(
     }
     fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     fused
+}
+
+/// Backward-compatible 2-list fusion for tests.
+#[cfg(test)]
+fn fuse_rrf(
+    lexical: &[FusedHit],
+    semantic: &[crate::index::SemanticHit],
+    k: u32,
+) -> Vec<FusedHit> {
+    fuse_rrf_multi(
+        &[
+            ("lexical", 1.0, lexical_to_rrf_entries(lexical)),
+            ("semantic", 1.0, semantic_to_rrf_entries(semantic)),
+        ],
+        k,
+    )
 }
 
 fn hit_semantically_relevant(
@@ -445,14 +571,25 @@ fn classify_state(
     RecallState::WeakHit
 }
 
-fn classify_response_mode(state: RecallState) -> ResponseMode {
-    match state {
-        RecallState::StrongHit => ResponseMode::Flow,
-        RecallState::WeakHit
-        | RecallState::Nothing
-        | RecallState::HighConfidenceGap
-        | RecallState::LowConfidenceGap => ResponseMode::Humility,
+fn judge_posture(inputs: PostureInputs) -> ResponseMode {
+    if inputs.audit_requested || inputs.high_stakes {
+        return ResponseMode::Audit;
     }
+    let humility = matches!(
+        inputs.state,
+        RecallState::WeakHit | RecallState::HighConfidenceGap | RecallState::LowConfidenceGap
+    ) || inputs.has_provisional
+        || inputs.has_conflict_edges
+        || inputs.meta_reliability_weak;
+    if humility {
+        ResponseMode::Humility
+    } else {
+        ResponseMode::Flow
+    }
+}
+
+fn fused_has_provisional(hits: &[(String, String)]) -> bool {
+    hits.iter().any(|(_, status)| status == "provisional")
 }
 
 fn hit_confidence(index: &Index, id: &str, status: &str) -> (f64, f64) {
@@ -762,7 +899,7 @@ mod tests {
 
         let retrieval = Retrieval::new(&index, &config);
         let result = retrieval
-            .recall("connection pool exhaustion", Some(2000))
+            .recall("connection pool exhaustion", Some(2000), RecallOptions::default())
             .unwrap();
 
         assert_ne!(result.state, RecallState::Nothing);
@@ -882,7 +1019,9 @@ mod tests {
 
         let retrieval = Retrieval::new(&index, &config);
         let query = "orchestra symphony violin concert hall performance";
-        let result = retrieval.recall(query, Some(2000)).unwrap();
+        let result = retrieval
+            .recall(query, Some(2000), RecallOptions::default())
+            .unwrap();
 
         assert_eq!(
             result.state,
@@ -918,7 +1057,11 @@ mod tests {
 
         let retrieval = Retrieval::new(&index, &config);
         let result = retrieval
-            .recall("xylophone quasar nebula zzztqx", Some(2000))
+            .recall(
+                "xylophone quasar nebula zzztqx",
+                Some(2000),
+                RecallOptions::default(),
+            )
             .unwrap();
 
         assert!(
@@ -932,6 +1075,36 @@ mod tests {
             result.state
         );
         assert!(result.tree.collections.is_empty());
+    }
+
+    #[test]
+    fn posture_judge_flow_on_strong_hit() {
+        assert_eq!(
+            judge_posture(PostureInputs {
+                state: RecallState::StrongHit,
+                has_provisional: false,
+                has_conflict_edges: false,
+                audit_requested: false,
+                high_stakes: false,
+                meta_reliability_weak: false,
+            }),
+            ResponseMode::Flow
+        );
+    }
+
+    #[test]
+    fn posture_judge_humility_on_provisional() {
+        assert_eq!(
+            judge_posture(PostureInputs {
+                state: RecallState::StrongHit,
+                has_provisional: true,
+                has_conflict_edges: false,
+                audit_requested: false,
+                high_stakes: false,
+                meta_reliability_weak: false,
+            }),
+            ResponseMode::Humility
+        );
     }
 
     #[test]

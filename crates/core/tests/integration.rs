@@ -1,6 +1,7 @@
 use alexandria_core::{
-    build_embedder, Config, Engram, Graph, Index, Library, Ops, RecallState, Rel, Retrieval,
-    Source, Status, Tier,
+    build_embedder, consolidate_fast, list_threads, meta_report, rebuild_meta_index,
+    record_correction, record_gap_outcome, style_profile, Config, Engram, Graph, Index, Library,
+    Ops, RecallOptions, RecallState, ResponseMode, Rel, Retrieval, Source, Status, Tier,
 };
 use tempfile::TempDir;
 
@@ -42,7 +43,9 @@ fn init_remember_recall_flow() {
     index.upsert(&e2, &p2.display().to_string()).unwrap();
 
     let retrieval = Retrieval::new(&index, &config);
-    let result = retrieval.recall("retrieval hybrid", Some(2000)).unwrap();
+    let result = retrieval
+        .recall("retrieval hybrid", Some(2000), RecallOptions::default())
+        .unwrap();
 
     let hits: Vec<_> = result
         .tree
@@ -78,7 +81,9 @@ fn reindex_rebuilds_from_text_after_db_deleted() {
     assert!(result.parse_failures.is_empty());
 
     let retrieval = Retrieval::new(&index2, &config);
-    let recall = retrieval.recall("reindex test", Some(2000)).unwrap();
+    let recall = retrieval
+        .recall("reindex test", Some(2000), RecallOptions::default())
+        .unwrap();
     let hits: Vec<_> = recall
         .tree
         .collections
@@ -131,7 +136,11 @@ fn embedder_change_invalidates_vec_index() {
     index2.reindex(&lib).unwrap();
 
     let recall = Retrieval::new(&index2, &config)
-        .recall("embedder invalidation", Some(2000))
+        .recall(
+            "embedder invalidation",
+            Some(2000),
+            RecallOptions::default(),
+        )
         .unwrap();
     let hits: Vec<_> = recall
         .tree
@@ -216,4 +225,150 @@ fn link_and_trace_flow() {
         .unwrap();
     assert_eq!(walk.nodes.len(), 1);
     assert_eq!(walk.nodes[0].id, b.id);
+}
+
+#[test]
+fn recall_audit_mode() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+    let index = open_index(&lib, &config);
+
+    let e = Engram::new("audit test", "body", Tier::Semantic, Status::Confirmed);
+    let p = lib.write_engram(&e).unwrap();
+    index.upsert(&e, &p.display().to_string()).unwrap();
+
+    let retrieval = Retrieval::new(&index, &config);
+    let result = retrieval
+        .recall(
+            "audit test",
+            Some(2000),
+            RecallOptions {
+                audit: true,
+                high_stakes: false,
+                domain: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(result.response_mode, ResponseMode::Audit);
+}
+
+#[test]
+fn threads_surface_for_topic() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+    let index = open_index(&lib, &config);
+
+    let mut thread = Engram::new(
+        "pricing tension",
+        "open debate",
+        Tier::Semantic,
+        Status::UnresolvedByDesign,
+    );
+    thread.surface_when = Some(vec!["topic:pricing".into()]);
+    let p = lib.write_engram(&thread).unwrap();
+    index.upsert(&thread, &p.display().to_string()).unwrap();
+
+    let result = list_threads(&lib, &index, Some("pricing")).unwrap();
+    assert_eq!(result.threads.len(), 1);
+    assert_eq!(result.threads[0].id, thread.id);
+}
+
+#[test]
+fn remember_surface_when_persisted_in_frontmatter() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+
+    let mut thread = Engram::new(
+        "pricing debate open",
+        "still unresolved",
+        Tier::Semantic,
+        Status::UnresolvedByDesign,
+    );
+    thread.surface_when = Some(vec!["topic:pricing".into(), "topic:competitors".into()]);
+    let p = lib.write_engram(&thread).unwrap();
+    let index = open_index(&lib, &config);
+    index.upsert(&thread, &p.display().to_string()).unwrap();
+
+    let read = lib.read_engram(&p).unwrap();
+    assert_eq!(
+        read.surface_when,
+        Some(vec!["topic:pricing".into(), "topic:competitors".into()])
+    );
+
+    let result = list_threads(&lib, &index, Some("competitors")).unwrap();
+    assert_eq!(result.threads.len(), 1);
+    assert!(result.threads[0].surface_when.contains(&"topic:competitors".to_string()));
+}
+
+#[test]
+fn meta_gap_false_positive_rate_updates() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+    let index = open_index(&lib, &config);
+
+    record_gap_outcome(
+        &lib,
+        "demo/domain",
+        "high_confidence_gap",
+        true,
+    )
+    .unwrap();
+    rebuild_meta_index(&index, &lib).unwrap();
+
+    let report = meta_report(&lib, &index, Some("demo/domain")).unwrap();
+    assert_eq!(report.total_gaps, 1);
+    assert!((report.gap_false_positive_rate - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn reflect_fast_writes_non_canonical_briefing() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+
+    let e = Engram::new("recent event", "body", Tier::Episodic, Status::Confirmed);
+    lib.write_engram(&e).unwrap();
+
+    let report = consolidate_fast(&lib, &config).unwrap();
+    assert!(std::path::Path::new(&report.briefing_path).exists());
+    let content = std::fs::read_to_string(&report.briefing_path).unwrap();
+    assert!(content.contains("track: fast"));
+    assert!(content.contains("status: provisional"));
+}
+
+#[test]
+fn style_profile_from_relational() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+
+    let mut rel = Engram::new(
+        "User prefers terse direct answers",
+        "Be concise and direct.",
+        Tier::Relational,
+        Status::Confirmed,
+    );
+    rel.tags.push("evidence:projects=2,task_types=1,registers=1".into());
+    lib.write_engram(&rel).unwrap();
+
+    let profile = style_profile(&lib, None).unwrap();
+    assert!(profile.verbosity < 0.5);
+    assert!(profile.directness > 0.5);
+}
+
+#[test]
+fn meta_report_after_correction() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let config = test_config(&dir);
+    let index = open_index(&lib, &config);
+
+    record_correction(&lib, "demo/domain", None).unwrap();
+    rebuild_meta_index(&index, &lib).unwrap();
+
+    let report = meta_report(&lib, &index, Some("demo/domain")).unwrap();
+    assert!(report.total_corrections >= 1);
 }

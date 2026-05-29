@@ -70,6 +70,35 @@ CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
 CREATE INDEX IF NOT EXISTS idx_sources_engram ON sources(engram_id);
 CREATE INDEX IF NOT EXISTS idx_sources_ref ON sources(ref);
+CREATE TABLE IF NOT EXISTS surface_triggers(
+  engram_id TEXT NOT NULL,
+  trigger TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_surface_triggers_trigger ON surface_triggers(trigger);
+CREATE TABLE IF NOT EXISTS meta_reliability(
+  domain TEXT PRIMARY KEY,
+  reliability REAL NOT NULL,
+  updated TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS corrections(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain TEXT NOT NULL,
+  engram_id TEXT,
+  recorded TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS gap_outcomes(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain TEXT NOT NULL,
+  gap_kind TEXT NOT NULL,
+  false_positive INTEGER NOT NULL,
+  recorded TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS promotion_reversals(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  engram_id TEXT NOT NULL,
+  from_tier TEXT NOT NULL,
+  recorded TEXT NOT NULL
+);
 
 CREATE TRIGGER IF NOT EXISTS engrams_ai AFTER INSERT ON engrams BEGIN
   INSERT INTO engrams_fts(rowid, claim, body) VALUES (new.rowid, new.claim, new.body);
@@ -84,6 +113,7 @@ END;
 "#;
 
 const VEC_TABLE: &str = "vec_engrams";
+const VEC_SHAPES_TABLE: &str = "vec_shapes";
 const META_NEEDS_REEMBED: &str = "needs_reembed";
 const EMBED_BATCH_SIZE: usize = 32;
 
@@ -135,6 +165,7 @@ impl Index {
         };
         index.ensure_schema()?;
         index.ensure_vec_table()?;
+        index.ensure_shapes_vec_table()?;
         Ok(index)
     }
 
@@ -168,6 +199,7 @@ impl Index {
         };
         index.ensure_schema()?;
         index.ensure_vec_table_from_embedder()?;
+        index.ensure_shapes_vec_table()?;
         Ok(index)
     }
 
@@ -305,6 +337,11 @@ impl Index {
             DROP TRIGGER IF EXISTS engrams_ad;
             DROP TRIGGER IF EXISTS engrams_ai;
             DROP TABLE IF EXISTS engrams_fts;
+            DROP TABLE IF EXISTS surface_triggers;
+            DROP TABLE IF EXISTS promotion_reversals;
+            DROP TABLE IF EXISTS gap_outcomes;
+            DROP TABLE IF EXISTS corrections;
+            DROP TABLE IF EXISTS meta_reliability;
             DROP TABLE IF EXISTS tags;
             DROP TABLE IF EXISTS collection_members;
             DROP TABLE IF EXISTS sources;
@@ -314,12 +351,15 @@ impl Index {
             "#,
         )?;
         self.drop_vec_table()?;
+        self.drop_shapes_vec_table()?;
         self.ensure_schema()?;
         if self.config.is_some() {
             self.ensure_vec_table()?;
+            self.ensure_shapes_vec_table()?;
         } else if let Ok(guard) = self.embedder.lock() {
             if let Some(embedder) = guard.as_deref() {
                 self.ensure_vec_table_inner(embedder)?;
+                self.ensure_shapes_vec_table_inner(embedder)?;
             }
         }
         Ok(())
@@ -396,6 +436,19 @@ impl Index {
                 "INSERT INTO sources (engram_id, kind, ref) VALUES (?1, ?2, ?3)",
                 params![engram.id, source.kind, source.r#ref],
             )?;
+        }
+
+        tx.execute(
+            "DELETE FROM surface_triggers WHERE engram_id = ?1",
+            params![engram.id],
+        )?;
+        if let Some(triggers) = &engram.surface_when {
+            for trigger in triggers {
+                tx.execute(
+                    "INSERT INTO surface_triggers (engram_id, trigger) VALUES (?1, ?2)",
+                    params![engram.id, trigger],
+                )?;
+            }
         }
 
         tx.commit()?;
@@ -513,6 +566,7 @@ impl Index {
         }
         if self.config.is_some() || self.needs_reembed() {
             self.reembed_all_engrams()?;
+            self.reembed_all_shapes(library)?;
         }
         Ok(ReindexResult {
             indexed: scan.engrams.len(),
@@ -764,6 +818,362 @@ impl Index {
 
     pub fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    pub fn has_conflict_edges_among(&self, ids: &[String]) -> Result<bool> {
+        for id in ids {
+            let count: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM edges WHERE from_id = ?1 AND rel IN ('conflicts_confirmed', 'tension_possible')",
+                params![id],
+                |row| row.get(0),
+            )?;
+            if count > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn engrams_matching_surface_trigger(&self, topic: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT DISTINCT engram_id, trigger FROM surface_triggers")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut ids = Vec::new();
+        for row in rows {
+            let (id, trigger) = row?;
+            if surface_trigger_matches(&trigger, topic) && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+
+    fn drop_shapes_vec_table(&self) -> Result<()> {
+        let _ = self
+            .conn
+            .execute_batch(&format!("DROP TABLE IF EXISTS {VEC_SHAPES_TABLE}"));
+        Ok(())
+    }
+
+    fn shapes_vec_table_exists(&self) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            params![VEC_SHAPES_TABLE],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn ensure_shapes_vec_table(&self) -> Result<()> {
+        self.with_embedder(|embedder| self.ensure_shapes_vec_table_inner(embedder))
+    }
+
+    fn ensure_shapes_vec_table_inner(&self, embedder: &dyn Embedder) -> Result<()> {
+        let dim = embedder.dim();
+        if !self.shapes_vec_table_exists()? {
+            self.conn.execute_batch(&format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS {VEC_SHAPES_TABLE} USING vec0(embedding float[{dim}])"
+            ))?;
+        }
+        Ok(())
+    }
+
+    pub fn upsert_shape_embedding(&self, engram_id: &str, shape_text: &str) -> Result<()> {
+        let rowid: i64 = self
+            .conn
+            .query_row(
+                "SELECT rowid FROM engrams WHERE id = ?1",
+                params![engram_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| AlexandriaError::EngramNotFound(engram_id.to_string()))?;
+        self.with_embedder(|embedder| {
+            let vectors = embed_sync(embedder, &[shape_text.to_string()])?;
+            let embedding = &vectors[0];
+            let _ = self.conn.execute(
+                &format!("DELETE FROM {VEC_SHAPES_TABLE} WHERE rowid = ?1"),
+                params![rowid],
+            );
+            self.conn.execute(
+                &format!("INSERT INTO {VEC_SHAPES_TABLE}(rowid, embedding) VALUES (?1, ?2)"),
+                params![rowid, embedding.as_bytes()],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn reembed_all_shapes(&self, library: &Library) -> Result<()> {
+        self.ensure_shapes_vec_table()?;
+        let scan = library.scan_engrams();
+        for engram in &scan.engrams {
+            if engram.tier != Tier::Episodic {
+                continue;
+            }
+            if let Some(ref shape_ref) = engram.shape_ref {
+                if let Ok(content) = std::fs::read_to_string(library.engram_path(engram)?) {
+                    if let Ok(parsed) = Engram::parse(&content) {
+                        let summary = if parsed.body.contains("Shape:") {
+                            parsed.body.clone()
+                        } else {
+                            format!("Shape: {shape_ref}")
+                        };
+                        let _ = self.upsert_shape_embedding(&engram.id, &summary);
+                    }
+                }
+            } else {
+                let summary = crate::shape::extract_shape_summary_heuristic(engram);
+                let _ = self.upsert_shape_embedding(&engram.id, &summary);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn shape_knn(&self, query_vec: &[f32], limit: u32) -> Result<Vec<SemanticHit>> {
+        if !self.shapes_vec_table_exists()? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(&format!(
+            r#"
+            SELECT e.id, e.claim, e.tier, e.status, v.distance
+            FROM {VEC_SHAPES_TABLE} v
+            JOIN engrams e ON e.rowid = v.rowid
+            WHERE v.embedding MATCH ?1
+              AND k = ?2
+              AND e.tier = 'episodic'
+            ORDER BY distance
+            "#
+        ))?;
+        let rows = stmt.query_map(params![query_vec.as_bytes(), limit], |row| {
+            Ok(SemanticHit {
+                id: row.get(0)?,
+                claim: row.get(1)?,
+                tier: row.get(2)?,
+                status: row.get(3)?,
+                distance: row.get(4)?,
+            })
+        })?;
+        let mut hits = Vec::new();
+        for row in rows {
+            hits.push(row?);
+        }
+        Ok(hits)
+    }
+
+    pub fn clear_meta_tables(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "DELETE FROM meta_reliability; DELETE FROM corrections; DELETE FROM gap_outcomes; DELETE FROM promotion_reversals;",
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_correction(
+        &self,
+        domain: &str,
+        engram_id: Option<&str>,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO corrections (domain, engram_id, recorded) VALUES (?1, ?2, ?3)",
+            params![domain, engram_id, timestamp.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_gap_outcome(
+        &self,
+        domain: &str,
+        gap_kind: &str,
+        false_positive: bool,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO gap_outcomes (domain, gap_kind, false_positive, recorded) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                domain,
+                gap_kind,
+                i32::from(false_positive),
+                timestamp.to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_promotion_reversal(
+        &self,
+        engram_id: &str,
+        from_tier: &str,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO promotion_reversals (engram_id, from_tier, recorded) VALUES (?1, ?2, ?3)",
+            params![engram_id, from_tier, timestamp.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Rebuild per-domain reliability from the meta event tables.
+    ///
+    /// Formula (v1 heuristic, tunable in M5):
+    ///   gap_penalty = (false_positive gaps) / (total gap outcomes)  [0 if no gaps]
+    ///   reliability = clamp(1.0 - min(corr_count * 0.1, 0.5) - gap_penalty * 0.3, 0..1)
+    ///
+    /// Example: 1 correction, 0 gaps → 0.9; 2 corrections → 0.8 (capped at -0.5 from corrections).
+    /// Posture judge forces humility when reliability < `posture.meta_reliability_threshold` (default 0.5).
+    pub fn recompute_meta_reliability(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM meta_reliability", [])?;
+        let mut stmt = self.conn.prepare(
+            "SELECT domain,
+                    (SELECT COUNT(*) FROM corrections c WHERE c.domain = d.domain) as corr,
+                    (SELECT COUNT(*) FROM gap_outcomes g WHERE g.domain = d.domain AND g.false_positive = 1) as gap_fp,
+                    (SELECT COUNT(*) FROM gap_outcomes g2 WHERE g2.domain = d.domain) as gap_total,
+                    (SELECT COUNT(*) FROM promotion_reversals p) as rev
+             FROM (SELECT DISTINCT domain FROM corrections
+                   UNION SELECT DISTINCT domain FROM gap_outcomes) d",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+        let now = chrono::Utc::now().to_rfc3339();
+        for row in rows {
+            let (domain, corr, gap_fp, gap_total, _rev) = row?;
+            let gap_penalty = if gap_total > 0 {
+                gap_fp as f64 / gap_total as f64
+            } else {
+                0.0
+            };
+            let reliability = (1.0 - (corr as f64 * 0.1).min(0.5) - gap_penalty * 0.3).clamp(0.0, 1.0);
+            self.conn.execute(
+                "INSERT INTO meta_reliability (domain, reliability, updated) VALUES (?1, ?2, ?3)",
+                params![domain, reliability, now],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn meta_reliability(&self, domain: Option<&str>) -> Result<f64> {
+        match domain {
+            Some(d) => {
+                let row = self.conn.query_row(
+                    "SELECT reliability FROM meta_reliability WHERE domain = ?1",
+                    params![d],
+                    |row| row.get::<_, f64>(0),
+                );
+                match row {
+                    Ok(r) => Ok(r),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(1.0),
+                    Err(e) => Err(e.into()),
+                }
+            }
+            None => {
+                let count: i64 = self.conn.query_row(
+                    "SELECT COUNT(*) FROM meta_reliability",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if count == 0 {
+                    return Ok(1.0);
+                }
+                self.conn
+                    .query_row(
+                        "SELECT AVG(reliability) FROM meta_reliability",
+                        [],
+                        |row| row.get::<_, f64>(0),
+                    )
+                    .map_err(Into::into)
+            }
+        }
+    }
+
+    pub fn recent_corrections_count(&self, domain: Option<&str>, days: i64) -> Result<u32> {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let count: i64 = match domain {
+            Some(d) => self.conn.query_row(
+                "SELECT COUNT(*) FROM corrections WHERE domain = ?1 AND recorded >= ?2",
+                params![d, cutoff],
+                |row| row.get(0),
+            )?,
+            None => self.conn.query_row(
+                "SELECT COUNT(*) FROM corrections WHERE recorded >= ?1",
+                params![cutoff],
+                |row| row.get(0),
+            )?,
+        };
+        Ok(count as u32)
+    }
+
+    pub fn gap_false_positive_rate(&self, domain: Option<&str>) -> Result<(f64, u32)> {
+        let (fp, total): (i64, i64) = match domain {
+            Some(d) => self.conn.query_row(
+                "SELECT COALESCE(SUM(false_positive),0), COUNT(*) FROM gap_outcomes WHERE domain = ?1",
+                params![d],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?,
+            None => self.conn.query_row(
+                "SELECT COALESCE(SUM(false_positive),0), COUNT(*) FROM gap_outcomes",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?,
+        };
+        let rate = if total > 0 {
+            fp as f64 / total as f64
+        } else {
+            0.0
+        };
+        Ok((rate, total as u32))
+    }
+
+    pub fn promotion_reversal_rate(&self, domain: Option<&str>) -> Result<(f64, u32)> {
+        let total: i64 = match domain {
+            Some(_) => self.conn.query_row(
+                "SELECT COUNT(*) FROM promotion_reversals",
+                [],
+                |row| row.get(0),
+            )?,
+            None => self.conn.query_row(
+                "SELECT COUNT(*) FROM promotion_reversals",
+                [],
+                |row| row.get(0),
+            )?,
+        };
+        let rate = if total > 0 {
+            (total as f64 * 0.1).min(1.0)
+        } else {
+            0.0
+        };
+        Ok((rate, total as u32))
+    }
+
+    pub fn total_corrections(&self, domain: Option<&str>) -> Result<u32> {
+        let count: i64 = match domain {
+            Some(d) => self.conn.query_row(
+                "SELECT COUNT(*) FROM corrections WHERE domain = ?1",
+                params![d],
+                |row| row.get(0),
+            )?,
+            None => self.conn.query_row(
+                "SELECT COUNT(*) FROM corrections",
+                [],
+                |row| row.get(0),
+            )?,
+        };
+        Ok(count as u32)
+    }
+}
+
+fn surface_trigger_matches(trigger: &str, topic: &str) -> bool {
+    let topic_lower = topic.to_lowercase();
+    let trigger_lower = trigger.to_lowercase();
+    if let Some(rest) = trigger_lower.strip_prefix("topic:") {
+        topic_lower.contains(rest) || rest.contains(&topic_lower)
+    } else {
+        trigger_lower.contains(&topic_lower) || topic_lower.contains(&trigger_lower)
     }
 }
 

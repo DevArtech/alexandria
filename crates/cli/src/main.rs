@@ -4,7 +4,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use commands::{archive, consolidate, expand, forget, init, link, recall, reflect, remember, reindex, timeline, trace};
+use commands::{
+    archive, consolidate, expand, forget, init, link, meta, recall, reflect, remember, reindex,
+    style, threads, timeline, trace,
+};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
@@ -51,12 +54,19 @@ enum Commands {
         /// Mark as derived from another engram id (repeatable)
         #[arg(long = "derived-from")]
         derived_from: Vec<String>,
+        /// Surfacing trigger for open threads (repeatable), e.g. topic:pricing
+        #[arg(long = "surface-when")]
+        surface_when: Vec<String>,
     },
     /// Hybrid fused retrieval (lexical + semantic, RRF fusion)
     Recall {
         query: String,
         #[arg(long)]
         budget: Option<u32>,
+        #[arg(long)]
+        audit: bool,
+        #[arg(long)]
+        high_stakes: bool,
     },
     /// Expand an engram to full body and linked claims
     Expand {
@@ -100,6 +110,33 @@ enum Commands {
         #[arg(long)]
         fast: bool,
     },
+    /// List open threads (unresolved_by_design)
+    Threads {
+        #[arg(long)]
+        surface_for: Option<String>,
+    },
+    /// Relational generation parameters (never quotable bodies)
+    Style {
+        #[arg(long)]
+        profile: bool,
+    },
+    /// Inspect meta-memory reliability and outcomes
+    Meta {
+        domain: Option<String>,
+        #[arg(long)]
+        record_correction: bool,
+        #[arg(long)]
+        correction_domain: Option<String>,
+        /// Record a recall gap outcome for meta-memory (requires --gap-kind)
+        #[arg(long)]
+        record_gap: bool,
+        /// Gap kind when recording: high_confidence_gap or low_confidence_gap
+        #[arg(long)]
+        gap_kind: Option<String>,
+        /// Gap was warranted (not a false positive); default records as false positive
+        #[arg(long)]
+        gap_confirmed: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -114,6 +151,7 @@ fn main() -> Result<()> {
             tag,
             source,
             derived_from,
+            surface_when,
         } => remember::run(remember::RememberOptions {
             library_path: cli.library,
             format: cli.format,
@@ -124,10 +162,14 @@ fn main() -> Result<()> {
             tags: tag,
             sources: source,
             derived_from,
+            surface_when,
         }),
-        Commands::Recall { query, budget } => {
-            recall::run(cli.library, cli.format, query, budget)
-        }
+        Commands::Recall {
+            query,
+            budget,
+            audit,
+            high_stakes,
+        } => recall::run(cli.library, cli.format, query, budget, audit, high_stakes),
         Commands::Expand { id, rel } => expand::run(cli.library, cli.format, id, rel),
         Commands::Reindex => reindex::run(cli.library, cli.format),
         Commands::Link { from, rel, to } => link::run(cli.library, cli.format, from, rel, to),
@@ -139,5 +181,26 @@ fn main() -> Result<()> {
         Commands::Forget { id } => forget::run(cli.library, cli.format, id),
         Commands::Consolidate => consolidate::run(cli.library, cli.format),
         Commands::Reflect { fast } => reflect::run(cli.library, cli.format, fast),
+        Commands::Threads { surface_for } => {
+            threads::run(cli.library, cli.format, surface_for)
+        }
+        Commands::Style { profile } => style::run(cli.library, cli.format, profile),
+        Commands::Meta {
+            domain,
+            record_correction,
+            correction_domain,
+            record_gap,
+            gap_kind,
+            gap_confirmed,
+        } => meta::run(meta::MetaOptions {
+            library_path: cli.library,
+            format: cli.format,
+            domain,
+            record_correction,
+            correction_domain,
+            record_gap,
+            gap_kind,
+            gap_confirmed,
+        }),
     }
 }

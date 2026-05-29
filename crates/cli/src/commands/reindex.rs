@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use alexandria_core::{Config, Index, Library};
+use alexandria_core::{rebuild_meta_index, Config, Index, Library};
 use anyhow::Result;
 
 use crate::OutputFormat;
@@ -13,6 +13,7 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat) -> Result<()> {
     let config = Config::load(&library.root)?;
     let index = Index::open(&library, &config)?;
     let result = index.reindex(&library)?;
+    rebuild_meta_index(&index, &library)?;
 
     match format {
         OutputFormat::Human => {

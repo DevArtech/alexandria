@@ -66,6 +66,8 @@ impl Library {
         }
 
         fs::create_dir_all(root.join(ALEXANDRIA_DIR))?;
+        fs::create_dir_all(root.join(ALEXANDRIA_DIR).join("fast_reflections"))?;
+        fs::create_dir_all(root.join(ALEXANDRIA_DIR).join("meta_log"))?;
         for dir in TIER_DIRS {
             fs::create_dir_all(root.join(dir))?;
         }

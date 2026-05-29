@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use alexandria_core::{Config, Index, Library, Retrieval};
+use alexandria_core::{Config, Index, Library, RecallOptions, Retrieval};
 use anyhow::Result;
 
 use crate::OutputFormat;
@@ -10,6 +10,8 @@ pub fn run(
     format: OutputFormat,
     query: String,
     budget: Option<u32>,
+    audit: bool,
+    high_stakes: bool,
 ) -> Result<()> {
     let library = match library_path {
         Some(p) => Library::discover(Some(&p))?,
@@ -18,7 +20,15 @@ pub fn run(
     let config = Config::load(&library.root)?;
     let index = Index::open(&library, &config)?;
     let retrieval = Retrieval::new(&index, &config);
-    let result = retrieval.recall(&query, budget)?;
+    let result = retrieval.recall(
+        &query,
+        budget,
+        RecallOptions {
+            audit,
+            high_stakes,
+            domain: None,
+        },
+    )?;
 
     match format {
         OutputFormat::Human => print_human(&result),

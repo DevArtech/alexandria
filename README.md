@@ -22,15 +22,16 @@ The full design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status
 
-Alexandria is under active construction. **Milestone 3 (graph + consolidation) is implemented**, on top of M1 (plain-text store, FTS5 index, five-state recall) and M2 (hybrid `sqlite-vec` semantic search, RRF fusion, density-based gap states, progressive-disclosure context trees, `expand`). M3 adds:
+Alexandria is under active construction. **Milestone 4 (relational, shape, meta-memory, modes) is implemented**, on top of M1 (plain-text store, FTS5 index, five-state recall), M2 (hybrid `sqlite-vec` semantic search, RRF fusion, density-based gap states, context trees, `expand`), and M3 (typed-edge graph + traversal, conflict taxonomy, provenance + `trace`, the promotion ladder, the `consolidate`/`reflect` "sleep" pass). M4 adds:
 
-- **Typed-edge graph** with multi-hop traversal (recursive CTEs) and the full conflict taxonomy (`conflicts_confirmed`, `tension_possible`, `context_qualified`, `coexists`, `supersedes`/`superseded_by`).
-- **Provenance**: record `--source` / `--derived-from` on `remember`, then `trace` walks the DAG back to first-party sources and reports effective confidence (derived-premise bound + conflict penalty).
-- **The promotion ladder**: `episodic → provisional → semantic`, with conflict-driven demotion.
-- **The consolidation "sleep" pass** (`consolidate` / `reflect`): dedupe + merge near-duplicates, promote/demote, salience decay, and collection roll-ups.
-- New verbs: `link`, `trace`, `timeline`, `archive`/`forget`, `consolidate`, `reflect`.
+- **Relational `style` channel** — `style --profile` assembles structured generation parameters (verbosity, directness, hedging, pushback tolerance, pacing) from relational Engrams, which are **never returned as quotable text**.
+- **Meta-memory** — an append-only `meta_log/` (survives `reindex`) tracking per-domain reliability, corrections, gap false-positive rates, and promotion-reversals; surfaced via `meta` and fed into the posture judge.
+- **Response modes** — `recall` recommends `flow` / `humility` / `audit`, escalating to humility on weak/gap states, provisional content, conflict edges, or weak domain reliability, and to audit on `--audit` / `--high-stakes`.
+- **Episodic shape index** — a sixth retrieval signal that matches by problem-arc similarity, not just topic.
+- **Open-thread surfacing** — `remember --surface-when topic:…` plus `threads --surface-for <topic>`.
+- **Fast/slow reflection** — `reflect --fast` writes non-canonical briefing material to `.alexandria/fast_reflections/`; the slow pass remains the only path to canonical memory.
 
-The relational `style` channel, meta-memory, response modes, and full provider integrations are planned (see [Roadmap](#roadmap)).
+Full provider integrations (Ollama, cloud) and a reranker are planned (see [Roadmap](#roadmap)).
 
 ## Build
 
@@ -89,8 +90,18 @@ alexandria timeline --since 2026-05-01 --tier episodic
 # 7. Archive (never deleted) and run the consolidation "sleep" pass
 alexandria archive eng_old      # alias: alexandria forget eng_old
 alexandria consolidate          # dedupe, promote/demote, decay, re-summarize
+alexandria reflect --fast       # quick, non-canonical briefing for the next session
 
-# 8. Rebuild the index entirely from the Markdown store
+# 8. Open threads, relational style, and meta-memory
+alexandria remember "Postgres vs SQLite for the cache?" \
+  --status unresolved_by_design --surface-when topic:database
+alexandria threads --surface-for database
+alexandria style --profile                      # generation params, never quotable bodies
+alexandria meta db                              # reliability / corrections / gap rates for a domain
+alexandria meta --record-correction --correction-domain db
+alexandria recall "cache strategy" --audit      # force full-provenance posture
+
+# 9. Rebuild the index entirely from the Markdown store
 alexandria reindex
 ```
 
@@ -128,8 +139,10 @@ The atomic unit is an **Engram**: a Markdown file with structured YAML frontmatt
 ```
 my-library/
 ├── .alexandria/
-│   ├── config.toml      # providers, budgets, thresholds
-│   └── index.db         # SQLite cache (FTS5 + ...) — rebuildable, git-ignored
+│   ├── config.toml         # providers, budgets, thresholds
+│   ├── index.db            # SQLite cache (FTS5 + sqlite-vec + ...) — rebuildable, git-ignored
+│   ├── meta_log/           # append-only meta-memory events — survives reindex
+│   └── fast_reflections/   # non-canonical fast-pass briefings (never scanned as memory)
 ├── episodic/
 ├── provisional/
 ├── semantic/
@@ -174,7 +187,7 @@ The distance thresholds are L2 distances in embedding space and **must be tuned 
 
 Alexandria is a Rust workspace:
 
-- `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5 + sqlite-vec), `retrieval` (hybrid RRF + five-state recall + context tree), `provider` (`Embedder` / `Completer`), `config`, `engram`.
+- `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5 + sqlite-vec), `retrieval` (hybrid RRF + five-state recall + context tree + posture judge), `graph` (traversal/`trace`/`timeline`), `consolidate` (slow + fast passes), `meta` (meta-memory), `shape`, `style`, `threads`, `ops`, `provider` (`Embedder` / `Completer`), `config`, `engram`.
 - `crates/cli` — the `alexandria` binary (built on `clap`).
 
 Embeddings and LLM calls sit behind pluggable provider traits with a local-first default. The default `fastembed` provider downloads an ONNX model on first use (~130MB); set `embedder = "hash"` in config for fully offline operation (no semantic quality guarantees). `expand` does not load the embedder.
@@ -188,7 +201,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, includ
 | **M1 — Skeleton** ✅ | Plain-text store, SQLite + FTS5 index, `init`/`remember`/`recall` (lexical)/`reindex`, five-state recall + response modes |
 | **M2 — Hybrid + budget** ✅ | Local embeddings (`fastembed` + `hash` for tests), semantic search, RRF fusion, density-based gap states, progressive-disclosure context tree, `expand` |
 | **M3 — Graph + consolidation** ✅ | Typed edges + traversal, conflict taxonomy, provenance (`--source`/`--derived-from` + `trace`), provisional promotion ladder, `link`/`timeline`/`archive`, the `reflect`/`consolidate` "sleep" pass |
-| **M4 — Relational, shape, meta-memory, modes** | Relational `style` channel, episodic shape index, meta-memory, fast/slow reflection (`reflect --fast`), open-thread surfacing |
+| **M4 — Relational, shape, meta-memory, modes** ✅ | Relational `style` channel, episodic shape index, meta-memory (`meta`), response modes (`--audit`/`--high-stakes`), fast/slow reflection (`reflect --fast`), open-thread surfacing (`--surface-when` / `threads --surface-for`) |
 | **M5 — Providers & polish** | Ollama + cloud providers, reranker, threshold self-calibration |
 
 ## License

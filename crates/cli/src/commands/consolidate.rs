@@ -12,7 +12,7 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat) -> Result<()> {
     };
     let config = Config::load(&library.root)?;
     let index = Index::open(&library, &config)?;
-    let report = consolidate_slow(&library, &index, &config)?;
+    let report = consolidate_slow(&library, &index, &config, None)?;
 
     match format {
         OutputFormat::Human => print_human(&report),
@@ -39,4 +39,6 @@ pub fn print_human(report: &alexandria_core::ConsolidationReport) {
     for item in &report.collections_resummarized {
         println!("  {item}");
     }
+    println!("shapes_extracted: {}", report.shapes_extracted.len());
+    println!("relational_decayed: {}", report.relational_decayed.len());
 }

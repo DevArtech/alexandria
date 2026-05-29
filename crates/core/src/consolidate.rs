@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::Path;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use serde::Serialize;
 
 use crate::config::{Config, ConsolidationConfig};
@@ -9,7 +10,10 @@ use crate::engram::{Engram, Link, Rel, Status, Tier};
 use crate::error::Result;
 use crate::graph::{has_conflicts_confirmed, incoming_supports_count};
 use crate::index::Index;
+use crate::meta::record_promotion_reversal;
 use crate::ops::Ops;
+use crate::provider::Completer;
+use crate::shape::extract_shape_summary;
 use crate::store::Library;
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -19,19 +23,75 @@ pub struct ConsolidationReport {
     pub demoted: Vec<String>,
     pub decayed: Vec<String>,
     pub collections_resummarized: Vec<String>,
+    pub shapes_extracted: Vec<String>,
+    pub relational_decayed: Vec<String>,
 }
 
-pub fn consolidate_slow(library: &Library, index: &Index, config: &Config) -> Result<ConsolidationReport> {
+#[derive(Debug, Clone, Serialize)]
+pub struct FastReflectionReport {
+    pub briefing_path: String,
+    pub engrams_summarized: usize,
+}
+
+pub fn consolidate_slow(
+    library: &Library,
+    index: &Index,
+    config: &Config,
+    completer: Option<&dyn Completer>,
+) -> Result<ConsolidationReport> {
     let mut report = ConsolidationReport::default();
     let ops = Ops::new(library, index);
     let cfg = &config.consolidation;
 
     dedupe_merge(library, index, &ops, cfg, &mut report)?;
     apply_promotion_ladder(library, index, &ops, cfg, &mut report)?;
+    extract_shapes(library, index, completer, &mut report)?;
     decay_salience(library, index, cfg, &mut report)?;
+    decay_relational_salience(library, index, &config.relational, &mut report)?;
+    consolidate_relational(library, index, &config.relational, &mut report)?;
     resummarize_collections(library, &mut report)?;
 
     Ok(report)
+}
+
+/// Fast-pass reflection: non-canonical briefing material (ARCHITECTURE §6.1).
+pub fn consolidate_fast(library: &Library, config: &Config) -> Result<FastReflectionReport> {
+    let scan = library.scan_engrams();
+    let cutoff = Utc::now() - Duration::hours(24);
+    let recent: Vec<&Engram> = scan
+        .engrams
+        .iter()
+        .filter(|e| e.tier == Tier::Episodic && e.last_touched >= cutoff)
+        .collect();
+
+    let dir = library.alexandria_dir().join("fast_reflections");
+    fs::create_dir_all(&dir)?;
+    let stamp = Utc::now().format("%Y-%m-%dT%H%M%S");
+    let path = dir.join(format!("{stamp}.brief.md"));
+
+    let mut claims: Vec<String> = recent
+        .iter()
+        .map(|e| format!("- [{}] {}", e.id, e.claim))
+        .collect();
+    claims.sort();
+
+    let body = if claims.is_empty() {
+        "No recent episodic engrams to summarize.".to_string()
+    } else {
+        claims.join("\n")
+    };
+
+    let content = format!(
+        "---\ntrack: fast\nstatus: provisional\ncreated: {}\n---\n\n# Fast briefing\n\n{body}\n",
+        Utc::now().to_rfc3339()
+    );
+    fs::write(&path, content)?;
+
+    let _ = config;
+    Ok(FastReflectionReport {
+        briefing_path: path.display().to_string(),
+        engrams_summarized: recent.len(),
+    })
 }
 
 fn dedupe_merge(
@@ -150,6 +210,13 @@ fn apply_promotion_ladder(
             engram.updated = Utc::now();
             changed = true;
             report.demoted.push(engram.id.clone());
+            let from_tier = if engram.tier == Tier::Semantic {
+                "semantic"
+            } else {
+                "provisional"
+            };
+            record_promotion_reversal(library, &engram.id, from_tier)?;
+            index.insert_promotion_reversal(&engram.id, from_tier, &Utc::now())?;
         } else if engram.tier == Tier::Episodic
             && engram.status != Status::Provisional
             && supports >= cfg.promote_episodic_to_provisional
@@ -174,6 +241,133 @@ fn apply_promotion_ladder(
         }
     }
     Ok(())
+}
+
+fn extract_shapes(
+    library: &Library,
+    index: &Index,
+    completer: Option<&dyn Completer>,
+    report: &mut ConsolidationReport,
+) -> Result<()> {
+    index.ensure_shapes_vec_table()?;
+    let scan = library.scan_engrams();
+    for mut engram in scan.engrams {
+        if engram.tier != Tier::Episodic {
+            continue;
+        }
+        if engram.status == Status::Superseded || engram.status == Status::Archived {
+            continue;
+        }
+        let summary = extract_shape_summary(&engram, completer)?;
+        let shape_id = format!("shp_{}", &engram.id[4..]);
+        engram.shape_ref = Some(shape_id);
+        engram.updated = Utc::now();
+        persist_engram(library, index, &engram)?;
+        index.upsert_shape_embedding(&engram.id, &summary)?;
+        report.shapes_extracted.push(engram.id.clone());
+    }
+    Ok(())
+}
+
+fn decay_relational_salience(
+    library: &Library,
+    index: &Index,
+    cfg: &crate::config::RelationalConfig,
+    report: &mut ConsolidationReport,
+) -> Result<()> {
+    let now = Utc::now();
+    let scan = library.scan_engrams();
+    for mut engram in scan.engrams {
+        if engram.tier != Tier::Relational {
+            continue;
+        }
+        if engram.status == Status::Superseded || engram.status == Status::Archived {
+            continue;
+        }
+        let elapsed_days = (now - engram.last_touched).num_seconds().max(0) as f64 / 86400.0;
+        if elapsed_days <= 0.0 {
+            continue;
+        }
+        let decay_factor = 0.5f64.powf(elapsed_days / cfg.salience_half_life_days);
+        let new_salience = (engram.salience * decay_factor).max(0.05);
+        if (new_salience - engram.salience).abs() < f64::EPSILON {
+            continue;
+        }
+        engram.salience = new_salience;
+        engram.updated = Utc::now();
+        persist_engram(library, index, &engram)?;
+        report.relational_decayed.push(engram.id.clone());
+    }
+    Ok(())
+}
+
+fn consolidate_relational(
+    library: &Library,
+    index: &Index,
+    cfg: &crate::config::RelationalConfig,
+    report: &mut ConsolidationReport,
+) -> Result<()> {
+    let scan = library.scan_engrams();
+    for mut engram in scan.engrams {
+        if engram.tier != Tier::Relational {
+            continue;
+        }
+        if engram.status == Status::Confirmed {
+            continue;
+        }
+        let evidence = parse_relational_evidence(&engram);
+        if evidence.projects >= cfg.min_projects
+            && evidence.task_types >= cfg.min_task_types
+            && evidence.registers >= cfg.min_registers
+        {
+            engram.status = Status::Confirmed;
+            engram.updated = Utc::now();
+            persist_engram(library, index, &engram)?;
+            report.promoted.push(format!("{}: relational->confirmed", engram.id));
+        }
+    }
+    Ok(())
+}
+
+struct RelationalEvidence {
+    projects: u32,
+    task_types: u32,
+    registers: u32,
+}
+
+fn parse_relational_evidence(engram: &Engram) -> RelationalEvidence {
+    let mut ev = RelationalEvidence {
+        projects: 0,
+        task_types: 0,
+        registers: 0,
+    };
+    for tag in &engram.tags {
+        if let Some(rest) = tag.strip_prefix("evidence:") {
+            for part in rest.split(',') {
+                let part = part.trim();
+                if let Some(n) = part.strip_prefix("projects=").and_then(|s| s.parse().ok()) {
+                    ev.projects = ev.projects.max(n);
+                } else if let Some(n) =
+                    part.strip_prefix("task_types=").and_then(|s| s.parse().ok())
+                {
+                    ev.task_types = ev.task_types.max(n);
+                } else if let Some(n) = part.strip_prefix("registers=").and_then(|s| s.parse().ok())
+                {
+                    ev.registers = ev.registers.max(n);
+                }
+            }
+        }
+    }
+    if ev.projects == 0 && !engram.collections.is_empty() {
+        ev.projects = engram.collections.len() as u32;
+    }
+    if ev.task_types == 0 && !engram.tags.is_empty() {
+        ev.task_types = 1;
+    }
+    if ev.registers == 0 {
+        ev.registers = 1;
+    }
+    ev
 }
 
 fn decay_salience(
@@ -365,7 +559,7 @@ mod tests {
         remember(&lib, &index, &a);
         remember(&lib, &index, &b);
 
-        let report = consolidate_slow(&lib, &index, &config).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
         assert!(!report.merged.is_empty());
 
         let a_state = lib.read_engram(&lib.engram_path(&a).unwrap());
@@ -402,10 +596,10 @@ mod tests {
         remember(&lib, &index, &supporter1);
         remember(&lib, &index, &supporter2);
 
-        let report = consolidate_slow(&lib, &index, &config).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
         assert!(report.promoted.iter().any(|p| p.contains("episodic->provisional")));
 
-        let report2 = consolidate_slow(&lib, &index, &config).unwrap();
+        let report2 = consolidate_slow(&lib, &index, &config, None).unwrap();
         assert!(report2.promoted.iter().any(|p| p.contains("provisional->semantic"))
             || report.promoted.iter().any(|p| p.contains("provisional->semantic")));
     }
@@ -418,7 +612,7 @@ mod tests {
         e.salience = 0.8;
         remember(&lib, &index, &e);
 
-        let report = consolidate_slow(&lib, &index, &config).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
         assert!(report.decayed.contains(&e.id));
         let updated = lib.read_engram(&lib.engram_path(&e).unwrap()).unwrap();
         assert!(updated.salience < 0.8);
@@ -437,8 +631,8 @@ mod tests {
         e.collections.push("demo".into());
         remember(&lib, &index, &e);
 
-        let first = consolidate_slow(&lib, &index, &config).unwrap();
-        let second = consolidate_slow(&lib, &index, &config).unwrap();
+        let first = consolidate_slow(&lib, &index, &config, None).unwrap();
+        let second = consolidate_slow(&lib, &index, &config, None).unwrap();
         assert_eq!(first.merged.len(), second.merged.len());
         assert_eq!(first.promoted.len(), second.promoted.len());
         assert_eq!(first.demoted.len(), second.demoted.len());
@@ -451,7 +645,7 @@ mod tests {
         e.collections.push("demo/project".into());
         remember(&lib, &index, &e);
 
-        let report = consolidate_slow(&lib, &index, &config).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
         assert!(report.collections_resummarized.contains(&"demo/project".to_string()));
         assert!(lib.root.join("collections/demo-project.md").exists());
     }

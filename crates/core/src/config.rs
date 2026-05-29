@@ -15,6 +15,12 @@ pub struct Config {
     pub thresholds: ThresholdsConfig,
     #[serde(default)]
     pub consolidation: ConsolidationConfig,
+    #[serde(default)]
+    pub shape: ShapeConfig,
+    #[serde(default)]
+    pub relational: RelationalConfig,
+    #[serde(default)]
+    pub posture: PostureConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -146,6 +152,99 @@ impl Default for Config {
             },
             thresholds: ThresholdsConfig::default(),
             consolidation: ConsolidationConfig::default(),
+            shape: ShapeConfig::default(),
+            relational: RelationalConfig::default(),
+            posture: PostureConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShapeConfig {
+    #[serde(default = "default_shape_enabled")]
+    pub enabled: bool,
+    /// RRF weight multiplier for shape signal (low-weight corroboration).
+    #[serde(default = "default_shape_weight")]
+    pub weight: f64,
+    #[serde(default = "default_shape_max_distance")]
+    pub max_distance: f32,
+}
+
+fn default_shape_enabled() -> bool {
+    true
+}
+
+fn default_shape_weight() -> f64 {
+    0.5
+}
+
+fn default_shape_max_distance() -> f32 {
+    0.6
+}
+
+impl Default for ShapeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_shape_enabled(),
+            weight: default_shape_weight(),
+            max_distance: default_shape_max_distance(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationalConfig {
+    #[serde(default = "default_relational_salience_half_life_days")]
+    pub salience_half_life_days: f64,
+    #[serde(default = "default_relational_min_projects")]
+    pub min_projects: u32,
+    #[serde(default = "default_relational_min_task_types")]
+    pub min_task_types: u32,
+    #[serde(default = "default_relational_min_registers")]
+    pub min_registers: u32,
+}
+
+fn default_relational_salience_half_life_days() -> f64 {
+    30.0
+}
+
+fn default_relational_min_projects() -> u32 {
+    1
+}
+
+fn default_relational_min_task_types() -> u32 {
+    1
+}
+
+fn default_relational_min_registers() -> u32 {
+    1
+}
+
+impl Default for RelationalConfig {
+    fn default() -> Self {
+        Self {
+            salience_half_life_days: default_relational_salience_half_life_days(),
+            min_projects: default_relational_min_projects(),
+            min_task_types: default_relational_min_task_types(),
+            min_registers: default_relational_min_registers(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostureConfig {
+    #[serde(default = "default_meta_reliability_threshold")]
+    pub meta_reliability_threshold: f64,
+}
+
+fn default_meta_reliability_threshold() -> f64 {
+    0.5
+}
+
+impl Default for PostureConfig {
+    fn default() -> Self {
+        Self {
+            meta_reliability_threshold: default_meta_reliability_threshold(),
         }
     }
 }

@@ -16,6 +16,8 @@ pub struct RememberOptions {
     pub tags: Vec<String>,
     pub sources: Vec<String>,
     pub derived_from: Vec<String>,
+    /// Surfacing triggers for open threads (repeatable), e.g. topic:pricing
+    pub surface_when: Vec<String>,
 }
 
 pub fn run(opts: RememberOptions) -> Result<()> {
@@ -54,6 +56,9 @@ pub fn run(opts: RememberOptions) -> Result<()> {
     for id in opts.derived_from {
         engram.source.push(Source::derived_from(&id));
     }
+    if !opts.surface_when.is_empty() {
+        engram.surface_when = Some(opts.surface_when);
+    }
 
     let path = library.write_engram(&engram)?;
     let config = alexandria_core::Config::load(&library.root)?;
@@ -68,6 +73,9 @@ pub fn run(opts: RememberOptions) -> Result<()> {
             if !engram.source.is_empty() {
                 println!("  sources: {}", engram.source.len());
             }
+            if let Some(triggers) = &engram.surface_when {
+                println!("  surface_when: {}", triggers.join(", "));
+            }
         }
         OutputFormat::Json => {
             println!(
@@ -79,6 +87,7 @@ pub fn run(opts: RememberOptions) -> Result<()> {
                     "status": status_label(engram.status),
                     "path": path.display().to_string(),
                     "sources": engram.source,
+                    "surface_when": engram.surface_when,
                     "token_cost": Engram::estimate_tokens(&engram.claim)
                 })
             );
