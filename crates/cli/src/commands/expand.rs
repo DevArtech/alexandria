@@ -43,6 +43,25 @@ fn print_human(result: &alexandria_core::ExpandResult) {
         result.confidence, result.effective_confidence
     );
     println!("token_cost: {}", result.token_cost);
+    if let Some(w) = &result.freshness_warning {
+        println!("freshness: {w}");
+    }
+    if !result.sources.is_empty() {
+        println!("sources:");
+        for s in &result.sources {
+            if let Some(age) = s.age_days {
+                println!(
+                    "  {}:{} observed {} ({}d ago)",
+                    s.kind,
+                    s.reference,
+                    s.observed.as_deref().unwrap_or("?"),
+                    age
+                );
+            } else {
+                println!("  {}:{} (freshness unknown)", s.kind, s.reference);
+            }
+        }
+    }
     println!();
     println!("{}", result.body);
     if !result.links.is_empty() {

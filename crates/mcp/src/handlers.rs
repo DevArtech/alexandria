@@ -1,16 +1,18 @@
 use std::path::PathBuf;
 
 use alexandria_core::{
-    build_completer, catalog as build_catalog, consolidate_fast, consolidate_slow, list_threads,
-    meta_report, rebuild_meta_index, record_correction, record_gap_outcome, style_profile, Config,
-    Engram, Graph, Index, Library, Ops, RecallOptions, Rel, Retrieval, Source, Status, Tier,
+    build_completer, catalog as build_catalog, consolidate_fast, consolidate_slow,
+    coverage as build_coverage, list_threads, map as build_map, meta_report, rebuild_meta_index,
+    record_correction, record_gap_outcome, style_profile, survey as build_survey, Config, Engram,
+    Graph, Index, Library, MapOptions, Ops, RecallOptions, Rel, Retrieval, Source, Status,
+    SurveyOptions, Tier,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 
 use crate::params::{
-    ConsolidateParams, ExpandParams, IdParams, LinkParams, MetaParams, RecallParams,
-    RememberParams, ThreadsParams, TimelineParams,
+    ConsolidateParams, CoverageParams, ExpandParams, IdParams, LinkParams, MapParams, MetaParams,
+    RecallParams, RememberParams, SurveyParams, ThreadsParams, TimelineParams,
 };
 
 pub struct ServerState {
@@ -60,6 +62,49 @@ pub fn catalog(state: &ServerState) -> Result<Value> {
     ServerState::to_json(&cat)
 }
 
+pub fn coverage(state: &ServerState, params: CoverageParams) -> Result<Value> {
+    let report = build_coverage(&params.topic, &state.index, &state.config)?;
+    ServerState::to_json(&report)
+}
+
+pub fn survey(state: &ServerState, params: SurveyParams) -> Result<Value> {
+    let result = build_survey(
+        &params.topic,
+        &state.index,
+        &state.config,
+        params.budget,
+        SurveyOptions {
+            depth: params.depth.unwrap_or(2),
+        },
+    )?;
+    ServerState::to_json(&result)
+}
+
+pub fn map(state: &ServerState, params: MapParams) -> Result<Value> {
+    let parsed_rels = if params.rel.is_empty() {
+        None
+    } else {
+        Some(
+            params
+                .rel
+                .iter()
+                .map(|r| Rel::parse(r))
+                .collect::<Result<Vec<Rel>, _>>()?,
+        )
+    };
+    let result = build_map(
+        &params.seed,
+        &state.index,
+        &state.config,
+        MapOptions {
+            depth: params.depth.unwrap_or(2),
+            rels: parsed_rels,
+            budget: params.budget,
+        },
+    )?;
+    ServerState::to_json(&result)
+}
+
 pub fn expand(state: &ServerState, params: ExpandParams) -> Result<Value> {
     let retrieval = Retrieval::new(&state.index, &state.config);
     let rel = params
@@ -90,7 +135,9 @@ pub fn remember(state: &mut ServerState, params: RememberParams) -> Result<Value
     engram.tags = params.tags;
 
     for s in params.sources {
-        engram.source.push(Source::parse_cli(&s)?);
+        let mut source = Source::parse_cli(&s)?;
+        source.resolve_observed(params.observed.as_deref())?;
+        engram.source.push(source);
     }
     for id in params.derived_from {
         engram.source.push(Source::derived_from(&id));

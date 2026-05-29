@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    archive, catalog, consolidate, expand, forget, init, link, meta, recall, reflect, remember,
-    reindex, style, threads, timeline, trace,
+    archive, catalog, consolidate, coverage, expand, forget, init, link, map, meta, recall,
+    reflect, remember, reindex, style, survey, threads, timeline, trace,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -57,6 +57,9 @@ enum Commands {
         /// Surfacing trigger for open threads (repeatable), e.g. topic:pricing
         #[arg(long = "surface-when")]
         surface_when: Vec<String>,
+        /// ISO8601 observation time applied to --source entries (defaults to now for observation kind)
+        #[arg(long)]
+        observed: Option<String>,
     },
     /// Hybrid fused retrieval (lexical + semantic, RRF fusion)
     Recall {
@@ -82,6 +85,29 @@ enum Commands {
     },
     /// List the collections and tags memory is organized by (with counts)
     Catalog,
+    /// Memory-density x-ray for a topic (counts, provenance, recency, detail ratio)
+    Coverage {
+        topic: String,
+    },
+    /// Exhaustive-but-budgeted topic traversal (claims + body token costs)
+    Survey {
+        topic: String,
+        #[arg(long)]
+        budget: Option<u32>,
+        #[arg(long)]
+        depth: Option<u32>,
+    },
+    /// Concept graph / relationship map from an engram id or topic
+    Map {
+        /// Engram id or topic query to seed the graph
+        seed: String,
+        #[arg(long)]
+        depth: Option<u32>,
+        #[arg(long)]
+        rel: Vec<String>,
+        #[arg(long)]
+        budget: Option<u32>,
+    },
     /// Rebuild the SQLite index from Markdown store
     Reindex,
     /// Create a typed edge between two engrams
@@ -160,6 +186,7 @@ fn main() -> Result<()> {
             source,
             derived_from,
             surface_when,
+            observed,
         } => remember::run(remember::RememberOptions {
             library_path: cli.library,
             format: cli.format,
@@ -171,6 +198,7 @@ fn main() -> Result<()> {
             sources: source,
             derived_from,
             surface_when,
+            observed,
         }),
         Commands::Recall {
             query,
@@ -191,6 +219,18 @@ fn main() -> Result<()> {
         ),
         Commands::Expand { id, rel } => expand::run(cli.library, cli.format, id, rel),
         Commands::Catalog => catalog::run(cli.library, cli.format),
+        Commands::Coverage { topic } => coverage::run(cli.library, cli.format, topic),
+        Commands::Survey {
+            topic,
+            budget,
+            depth,
+        } => survey::run(cli.library, cli.format, topic, budget, depth),
+        Commands::Map {
+            seed,
+            depth,
+            rel,
+            budget,
+        } => map::run(cli.library, cli.format, seed, depth, rel, budget),
         Commands::Reindex => reindex::run(cli.library, cli.format),
         Commands::Link { from, rel, to } => link::run(cli.library, cli.format, from, rel, to),
         Commands::Trace { id } => trace::run(cli.library, cli.format, id),

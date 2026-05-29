@@ -1,6 +1,7 @@
 use std::sync::{Mutex, Once};
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 use zerocopy::IntoBytes;
 
 use crate::config::Config;
@@ -133,6 +134,39 @@ pub struct SemanticHit {
     pub tier: String,
     pub status: String,
     pub distance: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceFreshness {
+    pub kind: String,
+    pub reference: String,
+    pub observed: Option<String>,
+    pub age_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StatusCounts {
+    pub confirmed: u32,
+    pub provisional: u32,
+    pub unresolved_by_design: u32,
+    pub superseded: u32,
+    pub archived: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProvenanceStats {
+    pub total_sources: u32,
+    pub first_party_sources: u32,
+    pub derived_sources: u32,
+    pub engrams_with_sources: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RecencyStats {
+    pub oldest_updated: Option<String>,
+    pub newest_updated: Option<String>,
+    pub oldest_touched: Option<String>,
+    pub newest_touched: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +328,10 @@ impl Index {
 
     fn ensure_schema(&self) -> Result<()> {
         self.conn.execute_batch(SCHEMA)?;
+        // Rebuildable migration: optional source observation timestamp.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE sources ADD COLUMN observed TEXT", []);
         Ok(())
     }
 
@@ -496,8 +534,13 @@ impl Index {
         )?;
         for source in &engram.source {
             tx.execute(
-                "INSERT INTO sources (engram_id, kind, ref) VALUES (?1, ?2, ?3)",
-                params![engram.id, source.kind, source.r#ref],
+                "INSERT INTO sources (engram_id, kind, ref, observed) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    engram.id,
+                    source.kind,
+                    source.r#ref,
+                    source.observed.map(|t| t.to_rfc3339()),
+                ],
             )?;
         }
 
@@ -532,12 +575,20 @@ impl Index {
 
     pub fn get_sources(&self, engram_id: &str) -> Result<Vec<crate::engram::Source>> {
         let mut stmt = self.conn.prepare(
-            "SELECT kind, ref FROM sources WHERE engram_id = ?1 ORDER BY rowid",
+            "SELECT kind, ref, observed FROM sources WHERE engram_id = ?1 ORDER BY rowid",
         )?;
         let rows = stmt.query_map(params![engram_id], |row| {
+            let observed_s: Option<String> = row.get(2)?;
+            let observed = match observed_s {
+                Some(s) => Some(parse_observed(&s).map_err(|e| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                })?),
+                None => None,
+            };
             Ok(crate::engram::Source {
                 kind: row.get(0)?,
                 r#ref: row.get(1)?,
+                observed,
             })
         })?;
         let mut out = Vec::new();
@@ -545,6 +596,22 @@ impl Index {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Most recent source observation time for an engram, if any source has `observed`.
+    pub fn max_source_observed(
+        &self,
+        engram_id: &str,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT observed FROM sources WHERE engram_id = ?1 AND observed IS NOT NULL ORDER BY observed DESC LIMIT 1",
+        )?;
+        let row = stmt.query_row(params![engram_id], |row| row.get::<_, String>(0));
+        match row {
+            Ok(s) => parse_observed(&s).map(Some),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn embed_text(engram: &Engram) -> String {
@@ -844,6 +911,153 @@ impl Index {
         }
 
         Ok(ids.into_iter().collect())
+    }
+
+    /// Estimate expand token cost from indexed body text (no file read).
+    pub fn body_token_cost(&self, id: &str) -> Result<Option<u32>> {
+        let row = self.conn.query_row(
+            "SELECT body FROM engrams WHERE id = ?1 AND tier != 'relational'",
+            params![id],
+            |row| row.get::<_, String>(0),
+        );
+        match row {
+            Ok(body) => Ok(Some(Engram::estimate_tokens(&body))),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Lexical search returning engram IDs only (relational tier excluded).
+    pub fn fts_engram_ids(&self, fts_query: &str, limit: u32) -> Result<Vec<String>> {
+        if fts_query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT e.id
+            FROM engrams_fts
+            JOIN engrams e ON e.rowid = engrams_fts.rowid
+            WHERE engrams_fts MATCH ?1
+              AND e.tier != 'relational'
+            ORDER BY bm25(engrams_fts) ASC
+            LIMIT ?2
+            "#,
+        )?;
+        let rows = stmt.query_map(params![fts_query, limit], |row| row.get(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Aggregate claim and body token costs for a set of engrams.
+    pub fn token_costs_for_ids(&self, ids: &[String]) -> Result<(u32, u32)> {
+        if ids.is_empty() {
+            return Ok((0, 0));
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT claim, body FROM engrams WHERE id IN ({placeholders}) AND tier != 'relational'"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut claim_tokens = 0u32;
+        let mut body_tokens = 0u32;
+        for row in rows {
+            let (claim, body) = row?;
+            claim_tokens += Engram::estimate_tokens(&claim);
+            body_tokens += Engram::estimate_tokens(&body);
+        }
+        Ok((claim_tokens, body_tokens))
+    }
+
+    /// Status counts for a set of engrams (relational tier excluded).
+    pub fn status_counts_for_ids(&self, ids: &[String]) -> Result<StatusCounts> {
+        if ids.is_empty() {
+            return Ok(StatusCounts::default());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT status, COUNT(*) FROM engrams WHERE id IN ({placeholders}) AND tier != 'relational' GROUP BY status"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
+        })?;
+        let mut counts = StatusCounts::default();
+        for row in rows {
+            let (status, n) = row?;
+            match status.as_str() {
+                "confirmed" => counts.confirmed = n,
+                "provisional" => counts.provisional = n,
+                "unresolved_by_design" => counts.unresolved_by_design = n,
+                "superseded" => counts.superseded = n,
+                "archived" => counts.archived = n,
+                _ => {}
+            }
+        }
+        Ok(counts)
+    }
+
+    /// Provenance statistics for a set of engrams.
+    pub fn provenance_stats_for_ids(&self, ids: &[String]) -> Result<ProvenanceStats> {
+        if ids.is_empty() {
+            return Ok(ProvenanceStats::default());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT kind, COUNT(*) FROM sources WHERE engram_id IN ({placeholders}) GROUP BY kind"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
+        })?;
+        let mut stats = ProvenanceStats::default();
+        for row in rows {
+            let (kind, n) = row?;
+            stats.total_sources += n;
+            if kind == "derived" {
+                stats.derived_sources += n;
+            } else {
+                stats.first_party_sources += n;
+            }
+        }
+        let engram_sql = format!(
+            "SELECT COUNT(DISTINCT engram_id) FROM sources WHERE engram_id IN ({placeholders})"
+        );
+        stats.engrams_with_sources = self.conn.query_row(
+            &engram_sql,
+            rusqlite::params_from_iter(ids.iter()),
+            |row| row.get(0),
+        )?;
+        Ok(stats)
+    }
+
+    /// Min/max updated and last_touched for a set of engrams.
+    pub fn recency_stats_for_ids(&self, ids: &[String]) -> Result<RecencyStats> {
+        if ids.is_empty() {
+            return Ok(RecencyStats::default());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT MIN(updated), MAX(updated), MIN(last_touched), MAX(last_touched)
+             FROM engrams WHERE id IN ({placeholders}) AND tier != 'relational'"
+        );
+        let (min_u, max_u, min_t, max_t): (Option<String>, Option<String>, Option<String>, Option<String>) =
+            self.conn.query_row(
+                &sql,
+                rusqlite::params_from_iter(ids.iter()),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        Ok(RecencyStats {
+            oldest_updated: min_u,
+            newest_updated: max_u,
+            oldest_touched: min_t,
+            newest_touched: max_t,
+        })
     }
 
     pub fn get_engram(&self, id: &str) -> Result<Option<EngramRow>> {
@@ -1392,6 +1606,12 @@ fn rel_str(rel: Rel) -> &'static str {
         Rel::AspectOf => "aspect_of",
         Rel::SameEpisode => "same_episode",
     }
+}
+
+fn parse_observed(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .map_err(|e| AlexandriaError::InvalidEngram(format!("invalid observed timestamp: {e}")))
 }
 
 fn parse_rel(s: &str) -> Result<Rel> {

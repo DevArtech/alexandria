@@ -143,6 +143,8 @@ impl Rel {
 pub struct Source {
     pub kind: String,
     pub r#ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed: Option<DateTime<Utc>>,
 }
 
 impl Source {
@@ -161,6 +163,7 @@ impl Source {
         Ok(Self {
             kind: kind.to_string(),
             r#ref: r#ref.to_string(),
+            observed: None,
         })
     }
 
@@ -168,8 +171,30 @@ impl Source {
         Self {
             kind: "derived".into(),
             r#ref: engram_id.to_string(),
+            observed: None,
         }
     }
+
+    /// Apply explicit `--observed` or default now for first-party source kinds.
+    pub fn resolve_observed(
+        &mut self,
+        explicit: Option<&str>,
+    ) -> Result<()> {
+        self.observed = if let Some(s) = explicit {
+            Some(parse_observed_str(s)?)
+        } else if self.kind == "observation" || self.kind == "document" || self.kind == "repo" {
+            Some(Utc::now())
+        } else {
+            None
+        };
+        Ok(())
+    }
+}
+
+fn parse_observed_str(s: &str) -> Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| AlexandriaError::InvalidEngram(format!("invalid observed timestamp: {e}")))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

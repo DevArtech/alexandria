@@ -21,6 +21,31 @@ pub struct RecallParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct MapParams {
+    pub seed: String,
+    #[serde(default)]
+    pub depth: Option<u32>,
+    #[serde(default)]
+    pub rel: Vec<String>,
+    #[serde(default)]
+    pub budget: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SurveyParams {
+    pub topic: String,
+    #[serde(default)]
+    pub budget: Option<u32>,
+    #[serde(default)]
+    pub depth: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CoverageParams {
+    pub topic: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExpandParams {
     pub id: String,
     #[serde(default)]
@@ -45,6 +70,8 @@ pub struct RememberParams {
     pub derived_from: Vec<String>,
     #[serde(default)]
     pub surface_when: Vec<String>,
+    #[serde(default)]
+    pub observed: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

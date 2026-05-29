@@ -25,6 +25,10 @@ pub struct Config {
     pub reranker: RerankerConfig,
     #[serde(default)]
     pub calibration: CalibrationConfig,
+    #[serde(default)]
+    pub recall: RecallConfig,
+    #[serde(default)]
+    pub freshness: FreshnessConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,6 +283,8 @@ impl Default for Config {
             posture: PostureConfig::default(),
             reranker: RerankerConfig::default(),
             calibration: CalibrationConfig::default(),
+            recall: RecallConfig::default(),
+            freshness: FreshnessConfig::default(),
         }
     }
 }
@@ -424,6 +430,51 @@ impl Default for CalibrationConfig {
         Self {
             enabled: default_calibration_enabled(),
             score_weight_floor: default_score_weight_floor(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallConfig {
+    /// When true, auto-detect matching collections/tags from the query and
+    /// blend them as a structural signal (additive — never excludes fuzzy hits).
+    #[serde(default = "default_auto_facet")]
+    pub auto_facet: bool,
+}
+
+fn default_auto_facet() -> bool {
+    true
+}
+
+impl Default for RecallConfig {
+    fn default() -> Self {
+        Self {
+            auto_facet: default_auto_facet(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreshnessConfig {
+    #[serde(default = "default_freshness_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_stale_after_days")]
+    pub stale_after_days: u32,
+}
+
+fn default_freshness_enabled() -> bool {
+    true
+}
+
+fn default_stale_after_days() -> u32 {
+    30
+}
+
+impl Default for FreshnessConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_freshness_enabled(),
+            stale_after_days: default_stale_after_days(),
         }
     }
 }

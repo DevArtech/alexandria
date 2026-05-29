@@ -34,8 +34,16 @@ fn print_human(result: &alexandria_core::TraceResult) {
     }
     for node in &result.nodes {
         println!(
-            "  depth {}: [{}] {} via {} -> {}",
-            node.depth, node.id, node.claim, node.source_kind, node.source_ref
+            "  depth {}: [{}] {} via {} -> {}{}",
+            node.depth,
+            node.id,
+            node.claim,
+            node.source_kind,
+            node.source_ref,
+            node.observed
+                .as_ref()
+                .map(|o| format!(" (observed {o})"))
+                .unwrap_or_default()
         );
     }
 }

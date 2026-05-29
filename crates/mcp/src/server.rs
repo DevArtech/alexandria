@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::handlers::{
-    archive, catalog, consolidate, expand, link, meta, recall, remember, style, threads, timeline,
-    trace, ServerState,
+    archive, catalog, consolidate, coverage, expand, link, map, meta, recall, remember, style,
+    survey, threads, timeline, trace, ServerState,
 };
 use crate::params::{
-    ConsolidateParams, ExpandParams, IdParams, LinkParams, MetaParams, RecallParams,
-    RememberParams, ThreadsParams, TimelineParams,
+    ConsolidateParams, CoverageParams, ExpandParams, IdParams, LinkParams, MapParams, MetaParams,
+    RecallParams, RememberParams, SurveyParams, ThreadsParams, TimelineParams,
 };
 use anyhow::Result;
 use rmcp::{
@@ -76,6 +76,30 @@ impl AlexandriaMcpServer {
     #[tool(description = "List the collections and tags memory is organized by, with counts (the structural table of contents). Use it to orient and then scope `recall` to the right facets.")]
     async fn catalog(&self) -> Result<CallToolResult, McpError> {
         self.run_read(catalog).await
+    }
+
+    #[tool(description = "Memory-density x-ray for a topic: engram counts, provenance depth, recency, detail ratio, and recommended next step (recall/expand/survey).")]
+    async fn coverage(
+        &self,
+        Parameters(params): Parameters<CoverageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.run_read(|state| coverage(state, params)).await
+    }
+
+    #[tool(description = "Exhaustive-but-budgeted topic survey: enumerate relevant engrams with claim/body token costs and expansion hints.")]
+    async fn survey(
+        &self,
+        Parameters(params): Parameters<SurveyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.run_read(|state| survey(state, params)).await
+    }
+
+    #[tool(description = "Concept graph / relationship map from an engram id or topic. Returns typed edges grouped by rel with optional mermaid diagram.")]
+    async fn map(
+        &self,
+        Parameters(params): Parameters<MapParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.run_read(|state| map(state, params)).await
     }
 
     #[tool(description = "Expand an engram to full body and linked claims. Relational memory is structurally suppressed.")]

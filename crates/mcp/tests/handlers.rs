@@ -37,6 +37,7 @@ fn remember_recall_round_trip() {
             sources: vec![],
             derived_from: vec![],
             surface_when: vec![],
+            observed: None,
         },
     )
     .unwrap();
@@ -141,6 +142,7 @@ fn recall_state_is_valid_enum() {
             sources: vec![],
             derived_from: vec![],
             surface_when: vec![],
+            observed: None,
         },
     )
     .unwrap();

@@ -15,6 +15,10 @@ pub struct TraceNode {
     pub source_kind: String,
     pub source_ref: String,
     pub depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub age_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,12 +126,21 @@ impl<'a> Graph<'a> {
                 source_kind: row.get(5)?,
                 source_ref: row.get(6)?,
                 depth: row.get(7)?,
+                observed: None,
+                age_days: None,
             })
         })?;
 
         let mut nodes = Vec::new();
         for row in rows {
             nodes.push(row?);
+        }
+
+        for node in &mut nodes {
+            if let Ok(Some(obs)) = self.index.max_source_observed(&node.id) {
+                node.observed = Some(obs.to_rfc3339());
+                node.age_days = Some(crate::freshness::age_days_since(obs));
+            }
         }
 
         let has_derived_sources = nodes.iter().any(|n| n.source_kind == "derived");
@@ -457,6 +470,7 @@ mod tests {
         told.source.push(Source {
             kind: "conversation".into(),
             r#ref: "conv_1".into(),
+            observed: None,
         });
         told.confidence = 0.95;
 
@@ -469,6 +483,7 @@ mod tests {
         derived.source.push(Source {
             kind: "derived".into(),
             r#ref: told.id.clone(),
+            observed: None,
         });
         derived.confidence = 0.9;
 

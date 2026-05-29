@@ -6,8 +6,10 @@ use serde::Serialize;
 use crate::config::{Config, ThresholdsConfig};
 use crate::engram::{Engram, Rel, Tier};
 use crate::error::Result;
+use crate::facets::{detect_facets, dominant_facet, facets_to_filters, DetectedFacet};
+use crate::freshness::{annotate_sources, freshness_hint};
 use crate::graph::compute_effective_confidence;
-use crate::index::Index;
+use crate::index::{Index, SourceFreshness};
 /// Options that influence response-mode selection on `recall`.
 #[derive(Debug, Clone, Default)]
 pub struct RecallOptions {
@@ -85,6 +87,8 @@ pub struct RecallHit {
     pub effective_confidence: f64,
     pub token_cost: u32,
     pub signals: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,6 +111,8 @@ pub struct RecallResult {
     pub query: String,
     pub tree: ContextTree,
     pub total_tokens: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detected_facets: Vec<DetectedFacet>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,6 +133,9 @@ pub struct ExpandResult {
     pub effective_confidence: f64,
     pub token_cost: u32,
     pub links: Vec<LinkClaim>,
+    pub sources: Vec<SourceFreshness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_warning: Option<String>,
 }
 
 pub struct Retrieval<'a> {
@@ -210,6 +219,15 @@ impl<'a> Retrieval<'a> {
             }
         }
 
+        let detected_facets = if options.collections.is_empty()
+            && options.tags.is_empty()
+            && self.config.recall.auto_facet
+        {
+            detect_facets(self.index, query)?
+        } else {
+            Vec::new()
+        };
+
         // Structured/faceted recall: when collection/tag filters are supplied,
         // restrict results to engrams matching them and enumerate the full set
         // (not just fuzzy top-k). Filter-matched hits carry a "structural" signal
@@ -250,6 +268,11 @@ impl<'a> Retrieval<'a> {
                     .partial_cmp(&a.score)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
+        } else if !detected_facets.is_empty() {
+            // Auto-facet: additive boost — never exclude fuzzy hits, and never
+            // force strong_hit (uses "facet" signal, not "structural").
+            let (auto_collections, auto_tags) = facets_to_filters(&detected_facets);
+            inject_facet_hits(self.index, &mut fused, &auto_collections, &auto_tags)?;
         }
 
         let neighbor_count = self
@@ -277,9 +300,9 @@ impl<'a> Retrieval<'a> {
             .map(|h| (h.id.clone(), h.status.clone()))
             .collect();
         let domain = options.domain.clone().or_else(|| {
-            fused
-                .first()
-                .and_then(|h| h.collections.first().cloned())
+            dominant_facet(&detected_facets)
+                .map(|f| f.name.clone())
+                .or_else(|| fused.first().and_then(|h| h.collections.first().cloned()))
         });
 
         apply_rerank_if_enabled(self.index, self.config, query, &mut fused)?;
@@ -323,6 +346,7 @@ impl<'a> Retrieval<'a> {
 
         let tree = build_context_tree(
             self.index,
+            self.config,
             &fused,
             &semantic_distances,
             &lexical_top,
@@ -338,6 +362,7 @@ impl<'a> Retrieval<'a> {
             query: query.to_string(),
             tree,
             total_tokens,
+            detected_facets,
         })
     }
 
@@ -367,6 +392,10 @@ impl<'a> Retrieval<'a> {
         let effective = compute_effective_confidence(self.index, &engram)?;
 
         let token_cost = Engram::estimate_tokens(&row.body);
+        let sources_raw = self.index.get_sources(id)?;
+        let sources = annotate_sources(sources_raw);
+        let freshness_warning = freshness_hint(self.index, id, &self.config.freshness)?
+            .and_then(|h| h.warning);
 
         Ok(ExpandResult {
             id: row.id,
@@ -378,6 +407,8 @@ impl<'a> Retrieval<'a> {
             effective_confidence: effective,
             token_cost,
             links: link_claims,
+            sources,
+            freshness_warning,
         })
     }
 
@@ -566,6 +597,60 @@ fn fuse_rrf_multi(
     fused
 }
 
+/// Additive facet injection: boost auto-detected facet matches without excluding
+/// others. Uses the "facet" signal (not "structural") so classify_state does not
+/// treat heuristic matches as deterministic strong hits.
+fn inject_facet_hits(
+    index: &Index,
+    fused: &mut Vec<FusedHit>,
+    collections: &[String],
+    tags: &[String],
+) -> Result<()> {
+    inject_signal_hits(index, fused, collections, tags, "facet")
+}
+
+fn inject_signal_hits(
+    index: &Index,
+    fused: &mut Vec<FusedHit>,
+    collections: &[String],
+    tags: &[String],
+    signal: &str,
+) -> Result<()> {
+    if collections.is_empty() && tags.is_empty() {
+        return Ok(());
+    }
+    let allowed = index.engram_ids_matching(collections, tags)?;
+    for id in allowed {
+        if let Some(hit) = fused.iter_mut().find(|h| h.id == id) {
+            if !hit.signals.iter().any(|s| s == signal) {
+                hit.signals.push(signal.to_string());
+                hit.signals.sort();
+            }
+            continue;
+        }
+        if let Some(row) = index.get_engram(&id)? {
+            if row.tier == Tier::Relational {
+                continue;
+            }
+            fused.push(FusedHit {
+                id: row.id.clone(),
+                claim: row.claim,
+                tier: tier_label(row.tier).to_string(),
+                status: status_label(row.status).to_string(),
+                score: 0.0,
+                signals: vec![signal.to_string()],
+                collections: row.collections,
+            });
+        }
+    }
+    fused.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(())
+}
+
 /// Backward-compatible 2-list fusion for tests.
 #[cfg(test)]
 fn fuse_rrf(
@@ -655,8 +740,12 @@ fn hit_is_relevant(
     lexical_top: &HashSet<String>,
     thresholds: &ThresholdsConfig,
 ) -> bool {
-    // Structured path: the hit matched an explicit collection/tag filter.
-    if hit.signals.iter().any(|s| s == "structural") {
+    // Explicit collection/tag filter: relevant by construction.
+    if hit
+        .signals
+        .iter()
+        .any(|s| s == "structural" || s == "facet")
+    {
         return true;
     }
     // Strong path: semantically close.
@@ -788,6 +877,7 @@ fn hit_confidence(index: &Index, id: &str, status: &str) -> (f64, f64) {
 
 fn build_context_tree(
     index: &Index,
+    config: &Config,
     fused: &[FusedHit],
     semantic_distances: &HashMap<String, f32>,
     lexical_top: &HashSet<String>,
@@ -807,8 +897,11 @@ fn build_context_tree(
     let qualifying: Vec<_> = fused
         .iter()
         .filter(|h| {
-            let structural = h.signals.iter().any(|s| s == "structural");
-            (structural || h.score >= thresholds.weak_cutoff)
+            let boosted = h
+                .signals
+                .iter()
+                .any(|s| s == "structural" || s == "facet");
+            (boosted || h.score >= thresholds.weak_cutoff)
                 && hit_is_relevant(h, semantic_distances, lexical_top, thresholds)
         })
         .collect();
@@ -821,6 +914,10 @@ fn build_context_tree(
             .cloned()
             .unwrap_or_else(|| "_uncategorized".to_string());
         let (confidence, effective) = hit_confidence(index, &hit.id, hit.status.as_str());
+        let freshness_warning = freshness_hint(index, &hit.id, &config.freshness)
+            .ok()
+            .flatten()
+            .and_then(|h| h.warning);
         let recall_hit = RecallHit {
             id: hit.id.clone(),
             claim: hit.claim.clone(),
@@ -831,6 +928,7 @@ fn build_context_tree(
             effective_confidence: effective,
             token_cost: 0,
             signals: hit.signals.clone(),
+            freshness_warning,
         };
         groups.entry(collection).or_default().push(recall_hit);
     }
@@ -1073,6 +1171,50 @@ mod tests {
         assert_eq!(fused[0].id, "a");
         assert!(fused[0].score > 0.0);
         assert_eq!(fused[0].signals.len(), 2);
+    }
+
+    #[test]
+    fn classify_state_facet_signal_does_not_force_strong_hit() {
+        let thresholds = ThresholdsConfig::default();
+        let facet_only = [FusedHit {
+            id: "a".into(),
+            claim: "c".into(),
+            tier: "semantic".into(),
+            status: "confirmed".into(),
+            score: 0.0,
+            signals: vec!["facet".into()],
+            collections: vec!["hatco".into()],
+        }];
+        assert_ne!(
+            classify_state(&facet_only, &HashMap::new(), &HashSet::new(), None, &thresholds, 0, false),
+            RecallState::StrongHit
+        );
+    }
+
+    #[test]
+    fn classify_state_structural_still_forces_strong_hit() {
+        let thresholds = ThresholdsConfig::default();
+        let structural = [FusedHit {
+            id: "a".into(),
+            claim: "c".into(),
+            tier: "semantic".into(),
+            status: "confirmed".into(),
+            score: 0.0,
+            signals: vec!["structural".into()],
+            collections: vec!["hatco".into()],
+        }];
+        assert_eq!(
+            classify_state(
+                &structural,
+                &HashMap::new(),
+                &HashSet::new(),
+                None,
+                &thresholds,
+                0,
+                false
+            ),
+            RecallState::StrongHit
+        );
     }
 
     #[test]

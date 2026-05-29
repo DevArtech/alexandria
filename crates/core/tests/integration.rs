@@ -186,6 +186,7 @@ fn reindex_rebuilds_sources_table() {
     engram.source.push(Source {
         kind: "conversation".into(),
         r#ref: "conv_2026".into(),
+        observed: None,
     });
     let path = lib.write_engram(&engram).unwrap();
 

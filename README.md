@@ -33,6 +33,16 @@ M1–M4 delivered the core memory engine: plain-text store, hybrid five-signal r
 - **Bounded meta-driven self-calibration** — fused scores in domains with low reliability (≥ 5 corrections floors at `0.5`, below the `0.6` posture threshold) are down-weighted and the posture judge switches from `flow` to `humility`, even when the immediate retrieval looks confident.
 - **Provider traits are synchronous** — `Embedder::embed` and `Completer::complete` are plain `fn`, not `async fn`. All HTTP implementations already used `reqwest::blocking`; removing the async decoration eliminates the latent nested-runtime panic if either trait is ever called from a real Tokio context.
 
+**Post-M5 polish — memory self-awareness:**
+
+Alexandria now surfaces signals it already computed but previously hid — so an agent can reason about *how much* it knows, *where depth is hiding*, and *when a topic wants expansion instead of a top-k answer*:
+
+- **`coverage`** — memory-density x-ray for a topic (canonical/provisional counts, open threads, provenance depth, recency, detail ratio, meta reliability, recommended next step).
+- **`survey`** — exhaustive-but-budgeted topic traversal: enumerate the relevant neighborhood cheaply, with per-hit `body_tokens` and `expansion_value` ("1 terse claim, 700 words behind it").
+- **`map`** — concept graph from an engram id or topic via typed-edge traversal, budget-trimmed and grouped by rel type (includes mermaid in human output).
+- **Facet-aware recall** — auto-detects matching collections/tags from the query (`recall.auto_facet = true` by default), blends them as an additive `facet` signal, and suggests explicit `--collection`/`--tag` scoping. Heuristic facet matches do **not** force `strong_hit` — only explicit filters do.
+- **Source freshness** — optional `observed` timestamp on provenance sources; `recall`/`survey`/`expand`/`trace` surface staleness warnings when sources age past `freshness.stale_after_days`.
+
 ## Build
 
 Requires a recent stable [Rust](https://www.rust-lang.org/tools/install) toolchain.
@@ -83,7 +93,7 @@ cp ~/alexandria/.alexandria/codex/skills/alexandria-memory/SKILL.md \
    ~/.codex/skills/alexandria-memory/SKILL.md
 ```
 
-4. Restart the Codex app. In a thread, mention `$alexandria-memory`, then ask the agent *"What MCP tools do you have?"* to confirm `recall`, `remember`, `expand`, etc. are available.
+4. Restart the Codex app. In a thread, mention `$alexandria-memory`, then ask the agent *"What MCP tools do you have?"* to confirm `recall`, `remember`, `expand`, `coverage`, `survey`, `map`, etc. are available.
 
 > The app may not list the server under `/mcp` or the MCP settings panel even when it works — a known display quirk. Confirm by asking the agent directly.
 
@@ -109,14 +119,27 @@ alexandria remember "Auth flow uses short-lived JWTs" --collection project-x --t
 alexandria remember "User said use Rust" --tier episodic --source conversation:conv_1
 alexandria remember "Alexandria is written in Rust" --derived-from eng_89187aa4
 
-# 3. Recall (hybrid lexical + semantic, RRF fusion) with a token budget
+# Record when a source was observed (ISO8601); observation/document/repo sources
+# default to now if --observed is omitted
+alexandria remember "Hatco repo inspected" --source observation:repo/hatco \
+  --observed 2026-05-29T18:00:00Z
+
+# 3. Orient and recall
+alexandria catalog                              # collections + tags with counts
 alexandria recall "hybrid retrieval"
 alexandria recall "auth jwt" --budget 1500 --format json
 
 # Structured/faceted recall: scope to collections/tags for deterministic,
-# enumerable results when fuzzy matching is ambiguous (composes with the query)
+# enumerable results when fuzzy matching is ambiguous (composes with the query).
+# recall also auto-detects matching facets and suggests scoping in human output.
 alexandria recall "preferences" --collection project-x
 alexandria recall "anything" --tag auth --format json
+
+# Memory self-awareness: how much do we know, and where is the depth?
+alexandria coverage "Hatco"                     # density x-ray + recommended_next
+alexandria survey "Hatco" --budget 3000         # exhaustive claims + body token costs
+alexandria map eng_7f3a2c --depth 2              # concept graph from id or topic
+alexandria map "Cartographer Agent" --rel depends_on --format json
 
 # 4. Expand a hit to full body and linked claims
 alexandria expand eng_7f3a2c
@@ -197,6 +220,21 @@ Rather than always returning rows, `recall` classifies the result so an agent ca
 
 Each result also carries a recommended **response mode** (`flow` / `humility` / `audit`) so the agent knows whether to use memory invisibly, flag its uncertainty, or expose the full provenance.
 
+When `recall.auto_facet` is enabled (default), matching collections/tags are detected from the query and blended additively. JSON output includes `detected_facets`; hits may carry a `freshness_warning` when source observation times exceed `[freshness].stale_after_days`.
+
+### Self-awareness verbs
+
+Use these when a top-k `recall` isn't enough context about *what* the library holds on a topic:
+
+| Verb | Purpose |
+| --- | --- |
+| `catalog` | Global table of contents: collections and tags with counts |
+| `coverage <topic>` | Memory-density x-ray: counts, provenance depth, recency, detail ratio, `recommended_next` |
+| `survey <topic>` | Exhaustive-but-budgeted traversal with `body_tokens` / `expansion_value` per hit |
+| `map <id\|topic>` | Typed-edge concept graph, budget-trimmed, with mermaid in human output |
+
+`coverage` answers "how dense is my memory here?" `survey` answers "show me everything relevant cheaply and where the bodies hide." `map` answers "how do these concepts relate?"
+
 ## How memory is organized
 
 Memory is typed into tiers, each with its own lifecycle:
@@ -266,6 +304,13 @@ embedder = "fastembed"     # "fastembed" (local), "ollama", "openai", "hash" (of
 # enabled = true
 # score_weight_floor = 0.5  # min multiplier when domain reliability is weak
 
+[recall]
+# auto_facet = true           # detect matching collections/tags from query (additive boost)
+
+[freshness]
+# enabled = true
+# stale_after_days = 30     # warn when youngest source observed is older than this
+
 [budgets]
 default_recall_tokens = 2000
 
@@ -287,7 +332,7 @@ The distance thresholds are L2 distances in embedding space and **must be tuned 
 
 Alexandria is a Rust workspace:
 
-- `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5 + sqlite-vec), `retrieval` (hybrid RRF + five-state recall + context tree + posture judge), `graph` (traversal/`trace`/`timeline`), `consolidate` (slow + fast passes), `meta` (meta-memory), `shape`, `style`, `threads`, `ops`, `provider` (`Embedder` / `Completer`), `config`, `engram`.
+- `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5 + sqlite-vec), `retrieval` (hybrid RRF + five-state recall + context tree + posture judge + facet detection), `graph` (traversal/`trace`/`timeline`), `coverage`/`survey`/`map` (memory self-awareness), `consolidate` (slow + fast passes), `meta` (meta-memory), `freshness`, `shape`, `style`, `threads`, `ops`, `provider` (`Embedder` / `Completer`), `config`, `engram`.
 - `crates/cli` — the `alexandria` binary (built on `clap`).
 - `crates/mcp` — `alexandria-mcp`: rmcp stdio MCP server exposing memory verbs as tools.
 - `crates/brain` — `alexandria-brain`: Codex second-brain loop (`init` + `run` with post-turn consolidation).
@@ -305,6 +350,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, includ
 | **M3 — Graph + consolidation** ✅ | Typed edges + traversal, conflict taxonomy, provenance (`--source`/`--derived-from` + `trace`), provisional promotion ladder, `link`/`timeline`/`archive`, the `reflect`/`consolidate` "sleep" pass |
 | **M4 — Relational, shape, meta-memory, modes** ✅ | Relational `style` channel, episodic shape index, meta-memory (`meta`), response modes (`--audit`/`--high-stakes`), fast/slow reflection (`reflect --fast`), open-thread surfacing (`--surface-when` / `threads --surface-for`) |
 | **M5 — Providers & polish** ✅ | Ollama + cloud providers (OpenAI, Anthropic), local reranker, meta-driven bounded self-calibration, sync provider traits, dim-probe caching |
+| **Self-awareness** ✅ | `coverage` / `survey` / `map`, facet-aware recall, source freshness warnings |
 | **Codex loop** ✅ | `alexandria-mcp` (MCP tools), `alexandria-brain` (Codex orchestrator + `alexandria-memory` skill) |
 
 ## License

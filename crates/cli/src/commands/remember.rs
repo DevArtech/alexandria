@@ -18,6 +18,8 @@ pub struct RememberOptions {
     pub derived_from: Vec<String>,
     /// Surfacing triggers for open threads (repeatable), e.g. topic:pricing
     pub surface_when: Vec<String>,
+    /// ISO8601 observation time for --source entries
+    pub observed: Option<String>,
 }
 
 pub fn run(opts: RememberOptions) -> Result<()> {
@@ -51,7 +53,9 @@ pub fn run(opts: RememberOptions) -> Result<()> {
     engram.tags = opts.tags;
 
     for s in opts.sources {
-        engram.source.push(Source::parse_cli(&s)?);
+        let mut source = Source::parse_cli(&s)?;
+        source.resolve_observed(opts.observed.as_deref())?;
+        engram.source.push(source);
     }
     for id in opts.derived_from {
         engram.source.push(Source::derived_from(&id));
