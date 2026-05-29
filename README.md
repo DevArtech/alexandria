@@ -41,7 +41,7 @@ Requires a recent stable [Rust](https://www.rust-lang.org/tools/install) toolcha
 git clone <repo-url> alexandria
 cd alexandria
 cargo build --release
-# binary at target/release/alexandria
+# binaries at target/release/alexandria, alexandria-mcp, alexandria-brain
 ```
 
 Run the test suite:
@@ -51,6 +51,45 @@ cargo test
 ```
 
 ## Quickstart
+
+### Use with the Codex app
+
+The fastest way to use Alexandria as a second brain is to register it as an MCP server in the OpenAI Codex app (Desktop or IDE extension).
+
+1. Build the binaries and initialize a library:
+
+```bash
+cargo build --release
+./target/release/alexandria init ~/alexandria   # or any directory you like
+```
+
+2. In the Codex app, open the MCP server settings (gear icon → Codex Settings) and **Add** a **STDIO** server:
+
+| Field | Value |
+| --- | --- |
+| Name | `Alexandria` |
+| Command to launch | `/absolute/path/to/alexandria/target/release/alexandria-mcp` |
+| Argument 1 | `--library` |
+| Argument 2 | `/absolute/path/to/your-library` |
+
+> **Use absolute paths.** The app launches the binary directly (no shell), so `~` is **not** expanded — `--library ~/alexandria` will fail to find the library and the server exits on launch (looks like "nothing happens"). Use e.g. `/Users/you/alexandria`.
+
+3. Install the memory skill so the agent follows the recall → act → remember loop:
+
+```bash
+alexandria-brain init ~/alexandria   # writes the bundled SKILL.md
+mkdir -p ~/.codex/skills/alexandria-memory
+cp ~/alexandria/.alexandria/codex/skills/alexandria-memory/SKILL.md \
+   ~/.codex/skills/alexandria-memory/SKILL.md
+```
+
+4. Restart the Codex app. In a thread, mention `$alexandria-memory`, then ask the agent *"What MCP tools do you have?"* to confirm `recall`, `remember`, `expand`, etc. are available.
+
+> The app may not list the server under `/mcp` or the MCP settings panel even when it works — a known display quirk. Confirm by asking the agent directly.
+
+For the full Codex integration (including the `alexandria-brain` CLI loop and sandbox notes), see [docs/SECOND_BRAIN.md](docs/SECOND_BRAIN.md).
+
+### CLI
 
 ```bash
 # 1. Initialize a library in the current directory
@@ -106,6 +145,27 @@ alexandria reindex
 ```
 
 Every command accepts `--format json` for machine/agent consumption and `--library <path>` to target a specific library (otherwise Alexandria discovers the nearest `.alexandria/` from the current directory upward).
+
+## Second-brain loop (Codex)
+
+Alexandria's memory engine is fully usable on its own. Optionally, run a packaged **second-brain loop** that drives OpenAI Codex as the agent with Alexandria wired in via MCP:
+
+```bash
+# Install + authenticate the Codex CLI separately (see docs/SECOND_BRAIN.md)
+
+# Provision library + Codex MCP config + alexandria-memory skill
+alexandria-brain init
+
+# Run a task (Codex recalls before acting, remembers after; brain consolidates post-turn)
+alexandria-brain run "What did we decide about auth?"
+alexandria-brain run "Research X and remember findings" --sandbox read-only --format json
+```
+
+`cargo build --release` produces three binaries: `alexandria` (standalone CLI), `alexandria-mcp` (stdio MCP server), and `alexandria-brain` (orchestrator). Put `alexandria-mcp` on PATH so Codex can spawn it.
+
+Because memory writes go through the MCP server (not Codex's file sandbox), `--sandbox read-only` still persists memory while preventing workspace file edits.
+
+Full setup, sandbox notes, and troubleshooting: [docs/SECOND_BRAIN.md](docs/SECOND_BRAIN.md).
 
 ### What `recall` returns
 
@@ -213,6 +273,8 @@ Alexandria is a Rust workspace:
 
 - `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5 + sqlite-vec), `retrieval` (hybrid RRF + five-state recall + context tree + posture judge), `graph` (traversal/`trace`/`timeline`), `consolidate` (slow + fast passes), `meta` (meta-memory), `shape`, `style`, `threads`, `ops`, `provider` (`Embedder` / `Completer`), `config`, `engram`.
 - `crates/cli` — the `alexandria` binary (built on `clap`).
+- `crates/mcp` — `alexandria-mcp`: rmcp stdio MCP server exposing memory verbs as tools.
+- `crates/brain` — `alexandria-brain`: Codex second-brain loop (`init` + `run` with post-turn consolidation).
 
 Embeddings and LLM calls sit behind pluggable, synchronous provider traits with a local-first default. The default `fastembed` provider downloads an ONNX model on first use (~130MB); set `embedder = "hash"` for fully offline operation. HTTP providers (Ollama, OpenAI) cache the embedding dimension in `index_meta` and skip the probe call on re-open. `expand` does not load the embedder.
 
@@ -227,6 +289,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, includ
 | **M3 — Graph + consolidation** ✅ | Typed edges + traversal, conflict taxonomy, provenance (`--source`/`--derived-from` + `trace`), provisional promotion ladder, `link`/`timeline`/`archive`, the `reflect`/`consolidate` "sleep" pass |
 | **M4 — Relational, shape, meta-memory, modes** ✅ | Relational `style` channel, episodic shape index, meta-memory (`meta`), response modes (`--audit`/`--high-stakes`), fast/slow reflection (`reflect --fast`), open-thread surfacing (`--surface-when` / `threads --surface-for`) |
 | **M5 — Providers & polish** ✅ | Ollama + cloud providers (OpenAI, Anthropic), local reranker, meta-driven bounded self-calibration, sync provider traits, dim-probe caching |
+| **Codex loop** ✅ | `alexandria-mcp` (MCP tools), `alexandria-brain` (Codex orchestrator + `alexandria-memory` skill) |
 
 ## License
 

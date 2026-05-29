@@ -802,6 +802,13 @@ fn tree_total_tokens(tree: &ContextTree) -> u32 {
 }
 
 /// Escape a user query for FTS5 MATCH.
+///
+/// Terms are combined with `OR` rather than FTS5's implicit `AND`, so a verbose
+/// natural-language query (e.g. "What is Alexandria and its purpose") still
+/// matches documents that contain only some of its terms. Precision is recovered
+/// downstream by BM25 ranking, RRF fusion, and the distance-gated five-state
+/// classifier; an implicit `AND` would instead require every term to appear,
+/// causing conversational queries to collapse to `nothing`.
 pub fn escape_fts_query(query: &str) -> String {
     query
         .split_whitespace()
@@ -819,7 +826,7 @@ pub fn escape_fts_query(query: &str) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" OR ")
 }
 
 fn tier_label(tier: Tier) -> &'static str {
@@ -904,7 +911,7 @@ mod tests {
     #[test]
     fn escape_fts_query_quotes_special_tokens() {
         assert_eq!(escape_fts_query("C++"), "\"C++\"");
-        assert_eq!(escape_fts_query("foo AND bar"), "foo \"AND\" bar");
+        assert_eq!(escape_fts_query("foo AND bar"), "foo OR \"AND\" OR bar");
     }
 
     #[test]

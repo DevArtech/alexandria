@@ -1,0 +1,24 @@
+[package]
+name = "alexandria-brain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Alexandria second-brain loop — drives Codex with memory MCP"
+
+[[bin]]
+name = "alexandria-brain"
+path = "src/main.rs"
+
+[lib]
+name = "alexandria_brain"
+path = "src/lib.rs"
+
+[dependencies]
+alexandria-core = { path = "../core" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
