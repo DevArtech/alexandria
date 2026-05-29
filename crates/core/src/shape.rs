@@ -50,7 +50,7 @@ pub fn extract_shape_summary(
             ),
             user: format!("Claim: {}\n\nBody:\n{}", engram.claim, engram.body),
         };
-        if let Ok(summary) = pollster::block_on(c.complete(&prompt)) {
+        if let Ok(summary) = c.complete(&prompt) {
             if !summary.trim().is_empty() {
                 return Ok(summary);
             }

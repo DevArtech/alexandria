@@ -2,7 +2,7 @@
 
 > A local-first, CLI-first "second brain" designed for how an LLM actually thinks, retrieves, and reasons — not for how a human files paper notes.
 
-**Status:** M1 + M2 + M3 + M4 implemented (store, hybrid retrieval, graph, consolidation, relational/style, shape, meta-memory, modes); M5 planned
+**Status:** M1 + M2 + M3 + M4 + M5 implemented (store, hybrid retrieval, graph, consolidation, relational/style, shape, meta-memory, modes, providers); post-M5 polish ongoing
 **Target runtime:** Rust (single binary)
 **Posture:** Local-first, plain-text source of truth, pluggable embedding/LLM providers (local default)
 
@@ -635,7 +635,7 @@ my-library/
 - **Conflict auto-resolution.** Which of the five conflict states, if any, may ever be auto-resolved vs. always deferred? Default: only `superseded` and `coexists` are handled automatically.
 - **Relational evidence thresholds.** How many distinct projects/task-types/registers constitute "enough" cross-dimensional evidence for promotion, and how aggressive is relational decay?
 - **Shape representation.** The LLM-written shape summary is the M4 default (Section 6.3.1); the open question is whether to invest in more abstract representations (state sequences, hypothesis/dead-end graph motifs) later.
-- **Posture judge calibration.** The rule thresholds in Section 10.1 are the most calibration-sensitive knobs in the system; they need a labeled evaluation harness and should eventually be self-calibrated per domain by meta-memory.
+- **Posture judge calibration.** The rule thresholds in Section 10.1 are the most calibration-sensitive knobs in the system; they need a labeled evaluation harness and should eventually be self-calibrated per domain by meta-memory. **M5 ships bounded calibration only** (meta-memory down-weights fused scores in low-reliability domains); the full live per-domain threshold self-tuning loop is deferred.
 - **Salience decay function.** Linear vs. exponential half-life; per-tier (relational fastest); tuning the boost-on-access factor.
 - **Multi-library support.** Single active library for v1; cross-library `recall` is a later concern.
 - **Working-memory persistence.** Purely in-process per invocation, or a small session file? Leaning ephemeral per-process for v1.
@@ -648,7 +648,7 @@ my-library/
 | **M2 — Hybrid + budget + five-state** ✅ | `sqlite-vec` semantic search, RRF fusion, **five-state recall** + density check, progressive-disclosure context tree, `expand`, token-budget API, `--format json`. `fastembed` default; `hash` embedder for offline/tests. |
 | **M3 — Graph, conflicts, consolidation, provisional** ✅ | Typed `edges` + recursive-CTE traversal, `link`, `trace`, `timeline`, the **conflict taxonomy** (Section 8), the promotion ladder (`provisional`), and the slow-pass `reflect`/`consolidate` (dedupe, promote, re-summarize, decay, `archive`). Deterministic/heuristic consolidation only; LLM-driven merge/classification deferred to M4/M5. |
 | **M4 — Relational, shape, meta-memory, modes** ✅ | Relational tier + structurally-suppressed `style`/`style_profile()`, heuristic structural-pattern extraction + shape index + shape signal, meta-memory index + `meta`, rule-based response-mode judge wired into `recall`, two-track `reflect --fast`, open-thread `threads` surfacing. Deterministic/heuristic; `Completer` hook reserved for M5. |
-| **M5 — Providers & polish** | Full provider abstraction (Ollama + cloud `Completer`/`Embedder`), config-driven selection, re-embed on model change, optional reranker, threshold self-calibration from meta-memory. |
+| **M5 — Providers & polish** ✅ | Full provider abstraction (Ollama + OpenAI embedder/completer, Anthropic completer), config-driven selection, auto re-embed on model change, optional fastembed reranker, bounded meta-memory score calibration (full live threshold self-tuning deferred). |
 
 ---
 

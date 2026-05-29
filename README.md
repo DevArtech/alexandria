@@ -22,16 +22,16 @@ The full design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status
 
-Alexandria is under active construction. **Milestone 4 (relational, shape, meta-memory, modes) is implemented**, on top of M1 (plain-text store, FTS5 index, five-state recall), M2 (hybrid `sqlite-vec` semantic search, RRF fusion, density-based gap states, context trees, `expand`), and M3 (typed-edge graph + traversal, conflict taxonomy, provenance + `trace`, the promotion ladder, the `consolidate`/`reflect` "sleep" pass). M4 adds:
+**All five milestones are complete.** Alexandria is fully implemented through M5.
 
-- **Relational `style` channel** — `style --profile` assembles structured generation parameters (verbosity, directness, hedging, pushback tolerance, pacing) from relational Engrams, which are **never returned as quotable text**.
-- **Meta-memory** — an append-only `meta_log/` (survives `reindex`) tracking per-domain reliability, corrections, gap false-positive rates, and promotion-reversals; surfaced via `meta` and fed into the posture judge.
-- **Response modes** — `recall` recommends `flow` / `humility` / `audit`, escalating to humility on weak/gap states, provisional content, conflict edges, or weak domain reliability, and to audit on `--audit` / `--high-stakes`.
-- **Episodic shape index** — a sixth retrieval signal that matches by problem-arc similarity, not just topic.
-- **Open-thread surfacing** — `remember --surface-when topic:…` plus `threads --surface-for <topic>`.
-- **Fast/slow reflection** — `reflect --fast` writes non-canonical briefing material to `.alexandria/fast_reflections/`; the slow pass remains the only path to canonical memory.
+M1–M4 delivered the core memory engine: plain-text store, hybrid five-signal retrieval (lexical + semantic + shape + graph + temporal) with five-state recall and budget-aware context trees, typed-edge graph with conflict taxonomy, provenance tracing, the consolidation "sleep" pass, the relational `style` channel, meta-memory, response modes, open-thread surfacing, and fast/slow reflection.
 
-Full provider integrations (Ollama, cloud) and a reranker are planned (see [Roadmap](#roadmap)).
+**M5 adds:**
+
+- **Pluggable cloud + local providers** — Ollama (`embedder = "ollama"`, `completer = "ollama"`), OpenAI (`embedder = "openai"`, `completer = "openai"`), Anthropic (`completer = "anthropic"`), alongside the existing local `fastembed` default. HTTP providers probe their embedding dimension once and cache it in `index_meta`, skipping the network call on subsequent opens.
+- **Cross-encoder reranker** — local fastembed reranker (`[reranker] enabled = true`), applied after RRF fusion. Five-state classification always runs on fused RRF scores before reranking, so the state bands are independent of reranker ordering.
+- **Bounded meta-driven self-calibration** — fused scores in domains with low reliability (≥ 5 corrections floors at `0.5`, below the `0.6` posture threshold) are down-weighted and the posture judge switches from `flow` to `humility`, even when the immediate retrieval looks confident.
+- **Provider traits are synchronous** — `Embedder::embed` and `Completer::complete` are plain `fn`, not `async fn`. All HTTP implementations already used `reqwest::blocking`; removing the async decoration eliminates the latent nested-runtime panic if either trait is ever called from a real Tokio context.
 
 ## Build
 
@@ -161,10 +161,34 @@ A library is just a directory — `git init` it for free time-travel over your m
 
 ```toml
 [providers]
-embedder = "fastembed"     # "fastembed" (local), "hash" (offline/tests), "none" (disabled)
+embedder = "fastembed"     # "fastembed" (local), "ollama", "openai", "hash" (offline/tests)
+# completer = "ollama"     # "ollama", "openai", "anthropic" — used by consolidation/shape
 
 [providers.embedding]
-# model = "BGESmallENV15"  # fastembed model id
+# model = "BGESmallENV15"  # fastembed model name
+
+[providers.ollama]
+# base_url = "http://localhost:11434"
+# embed_model = "nomic-embed-text"
+# complete_model = "llama3"
+
+[providers.openai]
+# base_url = "https://api.openai.com/v1"
+# embed_model = "text-embedding-3-small"
+# complete_model = "gpt-4o-mini"
+# api_key_env = "OPENAI_API_KEY"    # env var holding the key
+
+[providers.anthropic]
+# complete_model = "claude-3-5-haiku-20241022"
+# api_key_env = "ANTHROPIC_API_KEY"
+
+[reranker]
+# enabled = false           # set to true to activate fastembed cross-encoder reranker
+# model = "JINARerankerV1TurboEn"
+
+[calibration]
+# enabled = true
+# score_weight_floor = 0.5  # min multiplier when domain reliability is weak
 
 [budgets]
 default_recall_tokens = 2000
@@ -190,7 +214,7 @@ Alexandria is a Rust workspace:
 - `crates/core` — the library: `store` (plain-text truth), `index` (SQLite/FTS5 + sqlite-vec), `retrieval` (hybrid RRF + five-state recall + context tree + posture judge), `graph` (traversal/`trace`/`timeline`), `consolidate` (slow + fast passes), `meta` (meta-memory), `shape`, `style`, `threads`, `ops`, `provider` (`Embedder` / `Completer`), `config`, `engram`.
 - `crates/cli` — the `alexandria` binary (built on `clap`).
 
-Embeddings and LLM calls sit behind pluggable provider traits with a local-first default. The default `fastembed` provider downloads an ONNX model on first use (~130MB); set `embedder = "hash"` in config for fully offline operation (no semantic quality guarantees). `expand` does not load the embedder.
+Embeddings and LLM calls sit behind pluggable, synchronous provider traits with a local-first default. The default `fastembed` provider downloads an ONNX model on first use (~130MB); set `embedder = "hash"` for fully offline operation. HTTP providers (Ollama, OpenAI) cache the embedding dimension in `index_meta` and skip the probe call on re-open. `expand` does not load the embedder.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, including hybrid retrieval, progressive disclosure, consolidation, the conflict taxonomy, meta-memory, and response modes.
 
@@ -202,7 +226,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete design, includ
 | **M2 — Hybrid + budget** ✅ | Local embeddings (`fastembed` + `hash` for tests), semantic search, RRF fusion, density-based gap states, progressive-disclosure context tree, `expand` |
 | **M3 — Graph + consolidation** ✅ | Typed edges + traversal, conflict taxonomy, provenance (`--source`/`--derived-from` + `trace`), provisional promotion ladder, `link`/`timeline`/`archive`, the `reflect`/`consolidate` "sleep" pass |
 | **M4 — Relational, shape, meta-memory, modes** ✅ | Relational `style` channel, episodic shape index, meta-memory (`meta`), response modes (`--audit`/`--high-stakes`), fast/slow reflection (`reflect --fast`), open-thread surfacing (`--surface-when` / `threads --surface-for`) |
-| **M5 — Providers & polish** | Ollama + cloud providers, reranker, threshold self-calibration |
+| **M5 — Providers & polish** ✅ | Ollama + cloud providers (OpenAI, Anthropic), local reranker, meta-driven bounded self-calibration, sync provider traits, dim-probe caching |
 
 ## License
 

@@ -133,7 +133,10 @@ fn embedder_change_invalidates_vec_index() {
 
     let index2 = open_index(&lib, &config);
     assert_eq!(index2.embedder_id().unwrap(), "hash:v1");
-    index2.reindex(&lib).unwrap();
+    assert!(
+        !index2.needs_reembed(),
+        "Index::open should auto re-embed after embedder change"
+    );
 
     let recall = Retrieval::new(&index2, &config)
         .recall(
@@ -371,4 +374,55 @@ fn meta_report_after_correction() {
 
     let report = meta_report(&lib, &index, Some("demo/domain")).unwrap();
     assert!(report.total_corrections >= 1);
+}
+
+#[test]
+fn calibration_triggers_humility_in_weak_domain() {
+    let dir = TempDir::new().unwrap();
+    let lib = Library::init(dir.path()).unwrap();
+    let mut config = test_config(&dir);
+    config.calibration.enabled = true;
+    // Default meta_reliability_threshold is 0.6; 5 corrections → reliability 0.5.
+
+    let mut engram = Engram::new(
+        "calibration domain fact",
+        "body",
+        Tier::Semantic,
+        Status::Confirmed,
+    );
+    engram.collections.push("weak-domain".into());
+    let path = lib.write_engram(&engram).unwrap();
+
+    let index = open_index(&lib, &config);
+    index.upsert(&engram, &path.display().to_string()).unwrap();
+
+    for _ in 0..5 {
+        record_correction(&lib, "weak-domain", Some(&engram.id)).unwrap();
+    }
+    rebuild_meta_index(&index, &lib).unwrap();
+
+    let report = meta_report(&lib, &index, Some("weak-domain")).unwrap();
+    assert!(
+        (report.reliability - 0.5).abs() < f64::EPSILON,
+        "expected 5 corrections to floor reliability at 0.5, got {}",
+        report.reliability
+    );
+
+    let retrieval = Retrieval::new(&index, &config);
+    let result = retrieval
+        .recall(
+            "calibration domain",
+            Some(2000),
+            RecallOptions {
+                domain: Some("weak-domain".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.response_mode,
+        ResponseMode::Humility,
+        "5 corrections at reliability 0.5 must flip posture with default threshold 0.6"
+    );
 }

@@ -21,9 +21,13 @@ pub struct Config {
     pub relational: RelationalConfig,
     #[serde(default)]
     pub posture: PostureConfig,
+    #[serde(default)]
+    pub reranker: RerankerConfig,
+    #[serde(default)]
+    pub calibration: CalibrationConfig,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersConfig {
     #[serde(default = "default_embedder")]
     pub embedder: String,
@@ -31,6 +35,128 @@ pub struct ProvidersConfig {
     pub completer: Option<String>,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
+    #[serde(default)]
+    pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub openai: OpenAiConfig,
+    #[serde(default)]
+    pub anthropic: AnthropicConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaConfig {
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_ollama_embed_model")]
+    pub embed_model: String,
+    #[serde(default = "default_ollama_complete_model")]
+    pub complete_model: String,
+}
+
+fn default_ollama_base_url() -> String {
+    "http://localhost:11434".to_string()
+}
+
+fn default_ollama_embed_model() -> String {
+    "nomic-embed-text".to_string()
+}
+
+fn default_ollama_complete_model() -> String {
+    "llama3.1".to_string()
+}
+
+impl Default for OllamaConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_ollama_base_url(),
+            embed_model: default_ollama_embed_model(),
+            complete_model: default_ollama_complete_model(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiConfig {
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_openai_embed_model")]
+    pub embed_model: String,
+    #[serde(default = "default_openai_complete_model")]
+    pub complete_model: String,
+    #[serde(default = "default_openai_api_key_env")]
+    pub api_key_env: String,
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_openai_embed_model() -> String {
+    "text-embedding-3-small".to_string()
+}
+
+fn default_openai_complete_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+fn default_openai_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+
+impl Default for OpenAiConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_openai_base_url(),
+            embed_model: default_openai_embed_model(),
+            complete_model: default_openai_complete_model(),
+            api_key_env: default_openai_api_key_env(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnthropicConfig {
+    #[serde(default = "default_anthropic_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_anthropic_complete_model")]
+    pub complete_model: String,
+    #[serde(default = "default_anthropic_api_key_env")]
+    pub api_key_env: String,
+}
+
+fn default_anthropic_base_url() -> String {
+    "https://api.anthropic.com/v1".to_string()
+}
+
+fn default_anthropic_complete_model() -> String {
+    "claude-3-5-sonnet-latest".to_string()
+}
+
+fn default_anthropic_api_key_env() -> String {
+    "ANTHROPIC_API_KEY".to_string()
+}
+
+impl Default for AnthropicConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_anthropic_base_url(),
+            complete_model: default_anthropic_complete_model(),
+            api_key_env: default_anthropic_api_key_env(),
+        }
+    }
+}
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            embedder: default_embedder(),
+            completer: None,
+            embedding: EmbeddingConfig::default(),
+            ollama: OllamaConfig::default(),
+            openai: OpenAiConfig::default(),
+            anthropic: AnthropicConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -142,11 +268,7 @@ impl Default for ThresholdsConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            providers: ProvidersConfig {
-                embedder: default_embedder(),
-                completer: None,
-                embedding: EmbeddingConfig::default(),
-            },
+            providers: ProvidersConfig::default(),
             budgets: BudgetsConfig {
                 default_recall_tokens: default_recall_tokens(),
             },
@@ -155,6 +277,8 @@ impl Default for Config {
             shape: ShapeConfig::default(),
             relational: RelationalConfig::default(),
             posture: PostureConfig::default(),
+            reranker: RerankerConfig::default(),
+            calibration: CalibrationConfig::default(),
         }
     }
 }
@@ -238,13 +362,68 @@ pub struct PostureConfig {
 }
 
 fn default_meta_reliability_threshold() -> f64 {
-    0.5
+    // Corrections alone floor reliability at 0.5 (penalty capped at 0.5); threshold must
+    // exceed that floor so repeated corrections trigger humility and score calibration.
+    0.6
 }
 
 impl Default for PostureConfig {
     fn default() -> Self {
         Self {
             meta_reliability_threshold: default_meta_reliability_threshold(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RerankerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_reranker_model")]
+    pub model: String,
+    #[serde(default = "default_reranker_top_n")]
+    pub top_n: u32,
+}
+
+fn default_reranker_model() -> String {
+    "JINARerankerV1TurboEn".to_string()
+}
+
+fn default_reranker_top_n() -> u32 {
+    20
+}
+
+impl Default for RerankerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: default_reranker_model(),
+            top_n: default_reranker_top_n(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalibrationConfig {
+    #[serde(default = "default_calibration_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_score_weight_floor")]
+    pub score_weight_floor: f64,
+}
+
+fn default_calibration_enabled() -> bool {
+    true
+}
+
+fn default_score_weight_floor() -> f64 {
+    0.5
+}
+
+impl Default for CalibrationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_calibration_enabled(),
+            score_weight_floor: default_score_weight_floor(),
         }
     }
 }
@@ -353,6 +532,10 @@ mod tests {
         assert_eq!(loaded.thresholds.rrf_k, 60);
         assert_eq!(loaded.thresholds.semantic_weak_max_distance, 0.55);
         assert_eq!(loaded.thresholds.density_radius, 0.8);
+        assert_eq!(loaded.providers.ollama.embed_model, "nomic-embed-text");
+        assert_eq!(loaded.reranker.model, "JINARerankerV1TurboEn");
+        assert!(loaded.calibration.enabled);
+        assert_eq!(loaded.posture.meta_reliability_threshold, 0.6);
     }
 
     #[test]

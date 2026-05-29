@@ -29,7 +29,10 @@ pub use meta::{
     record_promotion_reversal, rebuild_meta_index, MetaLogEvent, MetaReport,
 };
 pub use ops::{ArchiveResult, LinkResult, Ops};
-pub use provider::{build_embedder, embed_sync, Completer, Embedder, HashEmbedder, Prompt};
+pub use provider::{
+    build_completer, build_embedder, build_embedder_with_dim_hint, build_reranker, embed_sync,
+    predict_embedder_id, Completer, Embedder, HashEmbedder, Prompt, Reranker,
+};
 pub use retrieval::{
     escape_fts_query, CollectionNode, ContextTree, ExpandResult, RecallHit, RecallOptions,
     RecallResult, RecallState, ResponseMode, Retrieval,

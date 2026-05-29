@@ -27,6 +27,9 @@ pub enum AlexandriaError {
     #[error("config error: {0}")]
     Config(String),
 
+    #[error("provider error: {0}")]
+    Provider(String),
+
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
 

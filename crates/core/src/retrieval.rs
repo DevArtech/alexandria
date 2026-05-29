@@ -224,6 +224,29 @@ impl<'a> Retrieval<'a> {
                 .first()
                 .and_then(|h| h.collections.first().cloned())
         });
+
+        apply_rerank_if_enabled(self.index, self.config, query, &mut fused)?;
+        // Rerank runs after classify_state so five-state bands stay on RRF/semantic signals.
+
+        // Bounded M5 calibration: down-weight fused scores in low-reliability domains.
+        // Full live per-domain threshold self-tuning is intentionally deferred.
+        if self.config.calibration.enabled {
+            if let Some(d) = &domain {
+                let reliability = self.index.meta_reliability(Some(d.as_str()))?;
+                if reliability < self.config.posture.meta_reliability_threshold {
+                    let weight = reliability.clamp(self.config.calibration.score_weight_floor, 1.0);
+                    for hit in &mut fused {
+                        hit.score *= weight;
+                    }
+                    fused.sort_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+            }
+        }
+
         let meta_weak = match &domain {
             Some(d) => {
                 self.index.meta_reliability(Some(d.as_str()))?
@@ -500,6 +523,47 @@ fn fuse_rrf(
         ],
         k,
     )
+}
+
+fn apply_rerank_if_enabled(
+    index: &Index,
+    config: &Config,
+    query: &str,
+    fused: &mut [FusedHit],
+) -> Result<()> {
+    if !config.reranker.enabled || fused.is_empty() {
+        return Ok(());
+    }
+    index.with_reranker(|reranker| {
+        if let Some(r) = reranker {
+            rerank_fused_hits(fused, query, r, config.reranker.top_n as usize)?;
+        }
+        Ok(())
+    })
+}
+
+fn rerank_fused_hits(
+    fused: &mut [FusedHit],
+    query: &str,
+    reranker: &dyn crate::provider::Reranker,
+    top_n: usize,
+) -> Result<()> {
+    let n = top_n.min(fused.len());
+    if n == 0 {
+        return Ok(());
+    }
+    let docs: Vec<String> = fused.iter().take(n).map(|h| h.claim.clone()).collect();
+    let scores = reranker.rerank(query, &docs)?;
+    let mut order: Vec<(usize, f32)> = (0..n).zip(scores).collect();
+    order.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let reordered: Vec<FusedHit> = order.into_iter().map(|(i, _)| fused[i].clone()).collect();
+    for (i, hit) in reordered.into_iter().enumerate() {
+        fused[i] = hit;
+    }
+    Ok(())
 }
 
 fn hit_semantically_relevant(

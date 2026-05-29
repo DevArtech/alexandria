@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use alexandria_core::{Config, Index, Library, consolidate_fast, consolidate_slow};
+use alexandria_core::{build_completer, Config, Index, Library, consolidate_fast, consolidate_slow};
 use anyhow::Result;
 
 use crate::OutputFormat;
@@ -30,7 +30,8 @@ pub fn run(
     }
 
     let index = Index::open(&library, &config)?;
-    let report = consolidate_slow(&library, &index, &config, None)?;
+    let completer = build_completer(&config)?;
+    let report = consolidate_slow(&library, &index, &config, completer.as_deref())?;
 
     match format {
         OutputFormat::Human => {

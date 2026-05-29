@@ -185,7 +185,9 @@ pub fn meta_report(_library: &Library, index: &Index, domain: Option<&str>) -> R
 }
 
 /// Domain reliability below this threshold forces humility in posture judge.
-pub const DEFAULT_RELIABILITY_THRESHOLD: f64 = 0.5;
+/// Default posture/calibration cutoff. Must be **above** the correction-only reliability
+/// floor (0.5) so domain corrections can trigger humility without requiring gap FPs.
+pub const DEFAULT_RELIABILITY_THRESHOLD: f64 = 0.6;
 
 pub fn domain_reliability_weak(index: &Index, domain: Option<&str>) -> Result<bool> {
     let reliability = index.meta_reliability(domain)?;

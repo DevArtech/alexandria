@@ -6,7 +6,10 @@ use zerocopy::IntoBytes;
 use crate::config::Config;
 use crate::engram::{Engram, Rel, Status, Tier};
 use crate::error::{AlexandriaError, Result};
-use crate::provider::{build_embedder, embed_sync, Embedder};
+use crate::provider::{
+    build_embedder_with_dim_hint, build_reranker, embed_sync, predict_embedder_id, Embedder,
+    Reranker,
+};
 use crate::store::{Library, ParseFailure};
 
 static VEC_EXTENSION: Once = Once::new();
@@ -148,6 +151,7 @@ pub struct Index {
     conn: Connection,
     config: Option<Config>,
     embedder: Mutex<Option<Box<dyn Embedder>>>,
+    reranker: Mutex<Option<Box<dyn Reranker>>>,
 }
 
 impl Index {
@@ -162,10 +166,15 @@ impl Index {
             conn,
             config: Some(config.clone()),
             embedder: Mutex::new(None),
+            reranker: Mutex::new(None),
         };
         index.ensure_schema()?;
         index.ensure_vec_table()?;
         index.ensure_shapes_vec_table()?;
+        if index.needs_reembed() {
+            index.reembed_all_engrams()?;
+            index.reembed_all_shapes(library)?;
+        }
         Ok(index)
     }
 
@@ -180,6 +189,7 @@ impl Index {
             conn,
             config: None,
             embedder: Mutex::new(None),
+            reranker: Mutex::new(None),
         };
         index.ensure_schema()?;
         Ok(index)
@@ -196,10 +206,15 @@ impl Index {
             conn,
             config: None,
             embedder: Mutex::new(Some(embedder)),
+            reranker: Mutex::new(None),
         };
         index.ensure_schema()?;
         index.ensure_vec_table_from_embedder()?;
         index.ensure_shapes_vec_table()?;
+        if index.needs_reembed() {
+            index.reembed_all_engrams()?;
+            index.reembed_all_shapes(library)?;
+        }
         Ok(index)
     }
 
@@ -216,8 +231,29 @@ impl Index {
             ));
         }
         let config = self.config.as_ref().unwrap();
-        *guard = Some(build_embedder(config)?);
+        // Check index_meta for a cached dim matching this provider so HTTP providers
+        // (OpenAI, Ollama) can skip their billed probe call on subsequent opens.
+        let known_dim = self.cached_dim_for_config(config);
+        *guard = Some(build_embedder_with_dim_hint(config, known_dim)?);
         Ok(())
+    }
+
+    /// Return the dim stored in `index_meta` if the stored embedder id matches what
+    /// `config` would produce, so HTTP providers can skip their probe call.
+    fn cached_dim_for_config(&self, config: &Config) -> Option<usize> {
+        let expected_id = predict_embedder_id(config)?;
+        let stored_id: String = self
+            .conn
+            .query_row(
+                "SELECT value FROM index_meta WHERE key = 'embedder_id'",
+                [],
+                |row| row.get(0),
+            )
+            .ok()?;
+        if stored_id != expected_id {
+            return None;
+        }
+        self.stored_embedding_dim().ok().flatten()
     }
 
     fn with_embedder<R>(&self, f: impl FnOnce(&dyn Embedder) -> Result<R>) -> Result<R> {
@@ -227,6 +263,33 @@ impl Index {
         })?;
         let embedder = guard.as_ref().unwrap();
         f(embedder.as_ref())
+    }
+
+    fn ensure_reranker(&self) -> Result<()> {
+        let mut guard = self.reranker.lock().map_err(|e| {
+            AlexandriaError::Other(anyhow::anyhow!("reranker lock poisoned: {e}"))
+        })?;
+        if guard.is_some() {
+            return Ok(());
+        }
+        let Some(config) = self.config.as_ref() else {
+            return Ok(());
+        };
+        if let Some(reranker) = build_reranker(config)? {
+            *guard = Some(reranker);
+        }
+        Ok(())
+    }
+
+    pub fn with_reranker<R>(&self, f: impl FnOnce(Option<&dyn Reranker>) -> Result<R>) -> Result<R> {
+        self.ensure_reranker()?;
+        let guard = self.reranker.lock().map_err(|e| {
+            AlexandriaError::Other(anyhow::anyhow!("reranker lock poisoned: {e}"))
+        })?;
+        match guard.as_ref() {
+            Some(r) => f(Some(r.as_ref())),
+            None => f(None),
+        }
     }
 
     fn ensure_schema(&self) -> Result<()> {
@@ -303,7 +366,7 @@ impl Index {
         Ok(())
     }
 
-    fn needs_reembed(&self) -> bool {
+    pub fn needs_reembed(&self) -> bool {
         self.conn
             .query_row(
                 "SELECT value FROM index_meta WHERE key = ?1",
@@ -1014,12 +1077,15 @@ impl Index {
 
     /// Rebuild per-domain reliability from the meta event tables.
     ///
-    /// Formula (v1 heuristic, tunable in M5):
+    /// Formula (v1 heuristic, tunable):
     ///   gap_penalty = (false_positive gaps) / (total gap outcomes)  [0 if no gaps]
     ///   reliability = clamp(1.0 - min(corr_count * 0.1, 0.5) - gap_penalty * 0.3, 0..1)
     ///
-    /// Example: 1 correction, 0 gaps → 0.9; 2 corrections → 0.8 (capped at -0.5 from corrections).
-    /// Posture judge forces humility when reliability < `posture.meta_reliability_threshold` (default 0.5).
+    /// M5 uses reliability for bounded calibration (score down-weighting in recall) and posture.
+    /// Full live per-domain threshold self-tuning is intentionally deferred.
+    ///
+    /// Default `posture.meta_reliability_threshold` is 0.6 because corrections alone floor
+    /// reliability at 0.5 (penalty capped at 0.5); threshold must exceed that to fire.
     pub fn recompute_meta_reliability(&self) -> Result<()> {
         self.conn.execute("DELETE FROM meta_reliability", [])?;
         let mut stmt = self.conn.prepare(
