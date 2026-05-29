@@ -197,14 +197,43 @@ Full setup, sandbox notes, and troubleshooting: [docs/SECOND_BRAIN.md](docs/SECO
 
 ### Shared remote memory (one brain for all your agents)
 
-`alexandria-mcp` can also serve over **HTTP**, so a single server becomes shared memory for every MCP-capable agent — Codex, Claude (Desktop or API), Cursor — connecting by URL with a bearer token. One store, one index, one embedding space.
+`alexandria-mcp` can also serve over **HTTP**, so a single server becomes shared memory for every MCP-capable agent — Codex, Claude, Cursor — connecting by URL. One store, one index, one embedding space.
 
-```bash
-alexandria-mcp --transport http --bind 0.0.0.0:8080 --library /srv/alexandria
-# ALEXANDRIA_MCP_TOKEN gates requests; put TLS (Caddy/nginx) in front
+The repo ships with an **OAuth proxy** (`proxy/`) in front of `alexandria-mcp` so different clients can authenticate the way they expect:
+
+```
+  Claude web ── OAuth (DCR + PKCE) ──┐
+  Cursor/Codex ── static bearer ───┼──▶ alexandria-oauth-proxy :8081 ──▶ alexandria-mcp :8080
+                                     │         (TLS via Caddy / Cloudflare / …)
 ```
 
-A `Dockerfile` + `docker-compose.yml` (with Caddy auto-TLS) are included. The embedder can be a self-hosted **OpenAI-compatible endpoint** (Ollama/LocalAI/TEI) — the `openai` provider omits auth when no key is set, so keyless local servers work. Full guide with per-client configs: [docs/REMOTE.md](docs/REMOTE.md).
+| Client | Auth | What you configure |
+| --- | --- | --- |
+| **Claude web** (Connectors) | OAuth 2.1 — Claude registers dynamically (DCR), you sign in via browser | MCP URL only: `https://your-domain/mcp` — leave Client ID / secret empty |
+| **Cursor, Codex, Claude Desktop/API** | Static bearer (when `ALLOW_LEGACY_STATIC_TOKEN=true`) | Same URL + `Authorization: Bearer <ALEXANDRIA_MCP_TOKEN>` |
+
+The proxy validates the client's OAuth JWT or legacy bearer, then injects `ALEXANDRIA_MCP_TOKEN` toward `alexandria-mcp`. The upstream server is unchanged.
+
+**Quick start (Docker):**
+
+```bash
+cp proxy/.env.example .env   # or create .env — see docs/REMOTE.md
+# Required in .env:
+#   ALEXANDRIA_MCP_TOKEN=$(openssl rand -hex 32)
+#   RESOURCE_URL=https://memory.example.com
+#   LOGIN_PASSWORD=...        # browser login for Claude OAuth
+
+alexandria init ./library     # if you haven't already
+docker compose up -d --build  # alexandria-mcp (internal) + oauth-proxy on :8081
+```
+
+Put TLS in front of `:8081` (Caddy, nginx, Cloudflare Tunnel, …). Only the proxy is published to the host; `alexandria-mcp` stays on the internal Docker network.
+
+**Claude web:** Settings → Connectors → Add custom connector → URL `https://your-domain/mcp`. When prompted, sign in with `LOGIN_USERNAME` / `LOGIN_PASSWORD` from `.env`.
+
+**Cursor / Codex:** point at the same URL with your static token (see [docs/REMOTE.md](docs/REMOTE.md) for per-client config snippets).
+
+Proxy internals, env reference, and verification commands: [proxy/README.md](proxy/README.md). Full remote deployment guide: [docs/REMOTE.md](docs/REMOTE.md).
 
 ### What `recall` returns
 

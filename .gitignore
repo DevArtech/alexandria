@@ -18,6 +18,8 @@ Thumbs.db
 # Alexandria — repo-root library created during development / CI
 /.alexandria/
 /my-library/
+/library/
+**/node_modules/
 
 # Rebuildable index cache anywhere in the tree (plain-text store is source of truth)
 **/.alexandria/index.db

@@ -1,5 +1,0 @@
-# Terminates TLS for your public hostname and proxies to alexandria-mcp.
-# Caddy auto-provisions a Let's Encrypt certificate for {$ALEXANDRIA_DOMAIN}.
-{$ALEXANDRIA_DOMAIN} {
-	reverse_proxy alexandria-mcp:8080
-}

@@ -1,0 +1,23 @@
+{
+  "name": "alexandria-oauth-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin reverse proxy that validates OAuth JWTs and forwards to the Alexandria MCP server.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/server.js",
+  "bin": {
+    "alexandria-oauth-proxy": "src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1",
+    "jose": "^5.9.6"
+  }
+}

@@ -12,6 +12,8 @@ services:
       # An initialized Alexandria library. Create with:
       #   alexandria init ./library
       - ./library:/srv/alexandria
+    # Not published to the host: only the OAuth proxy can reach it, over the
+    # internal compose network. It still enforces ALEXANDRIA_MCP_TOKEN.
     expose:
       - "8080"
     # Reaches the network for a local embedding endpoint, if you run one.
@@ -19,20 +21,33 @@ services:
     # http://host.docker.internal:11434/v1 in the library config and add:
     # extra_hosts: ["host.docker.internal:host-gateway"]
 
-  caddy:
-    image: caddy:2
+  # Thin reverse proxy: self-hosted OAuth (DCR + PKCE) or legacy bearer, then
+  # injects ALEXANDRIA_MCP_TOKEN toward alexandria-mcp. Only service on the host.
+  alexandria-oauth-proxy:
+    build: ./proxy
     restart: unless-stopped
-    depends_on: [alexandria-mcp]
-    ports:
-      - "80:80"
-      - "443:443"
+    depends_on:
+      - alexandria-mcp
     environment:
-      # Public hostname; Caddy provisions a Let's Encrypt cert for it.
-      ALEXANDRIA_DOMAIN: ${ALEXANDRIA_DOMAIN:?set ALEXANDRIA_DOMAIN in .env}
+      OAUTH_MODE: ${OAUTH_MODE:-self}
+      UPSTREAM_URL: http://alexandria-mcp:8080
+      ALEXANDRIA_MCP_TOKEN: ${ALEXANDRIA_MCP_TOKEN:?set ALEXANDRIA_MCP_TOKEN in .env}
+      RESOURCE_URL: ${RESOURCE_URL:?set RESOURCE_URL in .env}
+      OAUTH_ISSUER: ${OAUTH_ISSUER:-}
+      OAUTH_AUDIENCE: ${OAUTH_AUDIENCE:-}
+      OAUTH_SCOPES: ${OAUTH_SCOPES:-}
+      OAUTH_REQUIRED_SCOPES: ${OAUTH_REQUIRED_SCOPES:-}
+      LOGIN_USERNAME: ${LOGIN_USERNAME:-admin}
+      LOGIN_PASSWORD: ${LOGIN_PASSWORD:?set LOGIN_PASSWORD in .env}
+      DATA_DIR: /data
+      ALLOW_LEGACY_STATIC_TOKEN: ${ALLOW_LEGACY_STATIC_TOKEN:-false}
+      LEGACY_BEARER_TOKEN: ${LEGACY_BEARER_TOKEN:-}
+      PORT: "8081"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - oauth_proxy_data:/data
+    ports:
+      - "127.0.0.1:8081:8081"
 
   # Optional: a local OpenAI-compatible embedding endpoint.
   # Uncomment, then set the library's [providers] embedder = "openai" with
@@ -46,6 +61,5 @@ services:
   #     - "11434"
 
 volumes:
-  caddy_data:
-  caddy_config:
+  oauth_proxy_data:
   # ollama_models:
