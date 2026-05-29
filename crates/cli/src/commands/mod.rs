@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod catalog;
 pub mod consolidate;
 pub mod expand;
 pub mod forget;

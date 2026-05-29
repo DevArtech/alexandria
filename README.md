@@ -113,6 +113,11 @@ alexandria remember "Alexandria is written in Rust" --derived-from eng_89187aa4
 alexandria recall "hybrid retrieval"
 alexandria recall "auth jwt" --budget 1500 --format json
 
+# Structured/faceted recall: scope to collections/tags for deterministic,
+# enumerable results when fuzzy matching is ambiguous (composes with the query)
+alexandria recall "preferences" --collection project-x
+alexandria recall "anything" --tag auth --format json
+
 # 4. Expand a hit to full body and linked claims
 alexandria expand eng_7f3a2c
 alexandria expand eng_7f3a2c --rel depends_on --format json
@@ -166,6 +171,17 @@ alexandria-brain run "Research X and remember findings" --sandbox read-only --fo
 Because memory writes go through the MCP server (not Codex's file sandbox), `--sandbox read-only` still persists memory while preventing workspace file edits.
 
 Full setup, sandbox notes, and troubleshooting: [docs/SECOND_BRAIN.md](docs/SECOND_BRAIN.md).
+
+### Shared remote memory (one brain for all your agents)
+
+`alexandria-mcp` can also serve over **HTTP**, so a single server becomes shared memory for every MCP-capable agent — Codex, Claude (Desktop or API), Cursor — connecting by URL with a bearer token. One store, one index, one embedding space.
+
+```bash
+alexandria-mcp --transport http --bind 0.0.0.0:8080 --library /srv/alexandria
+# ALEXANDRIA_MCP_TOKEN gates requests; put TLS (Caddy/nginx) in front
+```
+
+A `Dockerfile` + `docker-compose.yml` (with Caddy auto-TLS) are included. The embedder can be a self-hosted **OpenAI-compatible endpoint** (Ollama/LocalAI/TEI) — the `openai` provider omits auth when no key is set, so keyless local servers work. Full guide with per-client configs: [docs/REMOTE.md](docs/REMOTE.md).
 
 ### What `recall` returns
 

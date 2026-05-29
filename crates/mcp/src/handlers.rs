@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use alexandria_core::{
-    build_completer, consolidate_fast, consolidate_slow, list_threads, meta_report,
-    rebuild_meta_index, record_correction, record_gap_outcome, style_profile, Config, Engram,
-    Graph, Index, Library, Ops, RecallOptions, Rel, Retrieval, Source, Status, Tier,
+    build_completer, catalog as build_catalog, consolidate_fast, consolidate_slow, list_threads,
+    meta_report, rebuild_meta_index, record_correction, record_gap_outcome, style_profile, Config,
+    Engram, Graph, Index, Library, Ops, RecallOptions, Rel, Retrieval, Source, Status, Tier,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
@@ -48,9 +48,16 @@ pub fn recall(state: &ServerState, params: RecallParams) -> Result<Value> {
             audit: params.audit,
             high_stakes: params.high_stakes,
             domain: params.domain,
+            collections: params.collections,
+            tags: params.tags,
         },
     )?;
     ServerState::to_json(&result)
+}
+
+pub fn catalog(state: &ServerState) -> Result<Value> {
+    let cat = build_catalog(&state.index)?;
+    ServerState::to_json(&cat)
 }
 
 pub fn expand(state: &ServerState, params: ExpandParams) -> Result<Value> {

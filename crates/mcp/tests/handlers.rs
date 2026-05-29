@@ -7,6 +7,11 @@ fn test_state(dir: &TempDir) -> ServerState {
     let lib = Library::init(dir.path()).unwrap();
     let mut config = Config::load(dir.path()).unwrap();
     config.providers.embedder = "hash".into();
+    // Hash embedder L2 distances are ~1.25; calibrate distance-gated relevance.
+    config.thresholds.semantic_weak_max_distance = 1.25;
+    config.thresholds.semantic_strong_max_distance = 1.1;
+    config.thresholds.density_radius = 1.55;
+    config.thresholds.centroid_radius = 1.4;
     let embedder = build_embedder(&config).unwrap();
     let index = Index::open_with_embedder(&lib, embedder).unwrap();
     ServerState {
@@ -45,6 +50,8 @@ fn remember_recall_round_trip() {
             audit: false,
             high_stakes: false,
             domain: None,
+            collections: vec![],
+            tags: vec![],
         },
     )
     .unwrap();
@@ -77,6 +84,8 @@ fn expand_excludes_relational() {
             audit: false,
             high_stakes: false,
             domain: None,
+            collections: vec![],
+            tags: vec![],
         },
     )
     .unwrap();
@@ -144,6 +153,8 @@ fn recall_state_is_valid_enum() {
             audit: false,
             high_stakes: false,
             domain: None,
+            collections: vec![],
+            tags: vec![],
         },
     )
     .unwrap();

@@ -12,6 +12,12 @@ pub struct RecallParams {
     pub high_stakes: bool,
     #[serde(default)]
     pub domain: Option<String>,
+    /// Restrict to engrams in any of these collections (structured/faceted recall).
+    #[serde(default)]
+    pub collections: Vec<String>,
+    /// Restrict to engrams carrying any of these tags (structured/faceted recall).
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

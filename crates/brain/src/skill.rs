@@ -11,6 +11,14 @@ You have Alexandria memory tools via MCP (`alexandria` server). Follow this loop
 ## Before you answer
 
 1. Call **`recall`** with a focused query derived from the user's task.
+   - For a broad question, prefer specific, content-bearing terms over filler.
+   - To see how memory is organized, call **`catalog`** — it lists the available
+     collections and tags (with counts), the structural table of contents.
+   - When you want a precise, enumerable slice of memory rather than a fuzzy
+     match, scope the `recall` call with `collections` and/or `tags` (structured
+     recall). This returns exactly the engrams in those facets, deterministically,
+     and is the reliable path whenever fuzzy matching is ambiguous or you need
+     completeness over ranking. Use whatever facets the catalog shows.
 2. Read the result carefully:
    - **`state`**: `strong_hit`, `weak_hit`, `high_confidence_gap`, `low_confidence_gap`, or `nothing`
    - **`response_mode`**: `flow`, `humility`, or `audit`
@@ -34,7 +42,9 @@ Persist durable outcomes with **`remember`**:
 - First line = short claim; rest = supporting detail.
 - Set **`tier`**: `episodic` for events, `semantic` for facts, `procedural` for how-tos, `relational` only for interaction preferences (never quotable).
 - Add **`sources`** (e.g. `conversation:<thread_id>`) and **`derived_from`** when appropriate.
-- Use **`collections`** and **`tags`** to keep memory organized.
+- Use **`collections`** and **`tags`** to keep memory organized — consistent
+  facets are what make later structured (`collections`/`tags`-scoped) recall
+  precise, so file durable facts under stable, reusable facets.
 
 ## Meta and maintenance
 

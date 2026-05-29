@@ -20,6 +20,16 @@ pub fn api_key_from_env(env_var: &str) -> Result<String> {
     })
 }
 
+/// Like [`api_key_from_env`] but returns `None` when the variable is unset or
+/// empty, instead of erroring. Used for OpenAI-compatible local endpoints
+/// (Ollama, LocalAI, text-embeddings-inference, …) that need no credential.
+pub fn optional_api_key_from_env(env_var: &str) -> Option<String> {
+    match std::env::var(env_var) {
+        Ok(v) if !v.trim().is_empty() => Some(v),
+        _ => None,
+    }
+}
+
 pub fn check_response(provider: &str, status: StatusCode, body: &str) -> Result<()> {
     if status.is_success() {
         return Ok(());

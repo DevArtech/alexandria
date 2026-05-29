@@ -755,6 +755,97 @@ impl Index {
         }
     }
 
+    /// Collections with their engram counts (relational tier excluded), most
+    /// populated first. The memory's structural "table of contents".
+    pub fn list_collections(&self) -> Result<Vec<(String, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT cm.collection, COUNT(*) AS n
+             FROM collection_members cm
+             JOIN engrams e ON e.id = cm.engram_id
+             WHERE e.tier != 'relational'
+             GROUP BY cm.collection
+             ORDER BY n DESC, cm.collection ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Tags with their engram counts (relational tier excluded), most used first.
+    pub fn list_tags(&self) -> Result<Vec<(String, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.tag, COUNT(*) AS n
+             FROM tags t
+             JOIN engrams e ON e.id = t.engram_id
+             WHERE e.tier != 'relational'
+             GROUP BY t.tag
+             ORDER BY n DESC, t.tag ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Total engram count excluding the relational tier.
+    pub fn count_engrams(&self) -> Result<usize> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM engrams WHERE tier != 'relational'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
+    /// Engram IDs in any of the given collections OR carrying any of the given
+    /// tags (set union). Used for structured/faceted recall. Empty inputs
+    /// contribute nothing; passing both unions the two facets.
+    pub fn engram_ids_matching(
+        &self,
+        collections: &[String],
+        tags: &[String],
+    ) -> Result<Vec<String>> {
+        let mut ids = std::collections::BTreeSet::new();
+
+        if !collections.is_empty() {
+            let placeholders = vec!["?"; collections.len()].join(",");
+            let sql = format!(
+                "SELECT DISTINCT engram_id FROM collection_members WHERE collection IN ({placeholders})"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(collections.iter()), |r| {
+                r.get::<_, String>(0)
+            })?;
+            for r in rows {
+                ids.insert(r?);
+            }
+        }
+
+        if !tags.is_empty() {
+            let placeholders = vec!["?"; tags.len()].join(",");
+            let sql =
+                format!("SELECT DISTINCT engram_id FROM tags WHERE tag IN ({placeholders})");
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(tags.iter()), |r| {
+                r.get::<_, String>(0)
+            })?;
+            for r in rows {
+                ids.insert(r?);
+            }
+        }
+
+        Ok(ids.into_iter().collect())
+    }
+
     pub fn get_engram(&self, id: &str) -> Result<Option<EngramRow>> {
         let row = self.conn.query_row(
             "SELECT id, tier, status, claim, body, confidence FROM engrams WHERE id = ?1",

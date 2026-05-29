@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::error::{AlexandriaError, Result};
-use crate::provider::http::{api_key_from_env, check_response, new_client};
+use crate::provider::http::{check_response, new_client, optional_api_key_from_env};
 use crate::provider::{Completer, Embedder, Prompt};
 
 pub struct OpenAiEmbedder {
@@ -10,15 +10,27 @@ pub struct OpenAiEmbedder {
     dim: usize,
     base_url: String,
     model: String,
-    api_key: String,
+    api_key: Option<String>,
     client: reqwest::blocking::Client,
 }
 
 pub struct OpenAiCompleter {
     base_url: String,
     model: String,
-    api_key: String,
+    api_key: Option<String>,
     client: reqwest::blocking::Client,
+}
+
+/// Attach bearer auth only when a key is present, so keyless local
+/// OpenAI-compatible servers (Ollama, LocalAI, TEI) are not rejected.
+fn maybe_bearer(
+    req: reqwest::blocking::RequestBuilder,
+    api_key: &Option<String>,
+) -> reqwest::blocking::RequestBuilder {
+    match api_key {
+        Some(key) => req.bearer_auth(key),
+        None => req,
+    }
 }
 
 impl OpenAiEmbedder {
@@ -32,7 +44,7 @@ impl OpenAiEmbedder {
         let cfg = &config.providers.openai;
         let base_url = cfg.base_url.trim_end_matches('/').to_string();
         let model = cfg.embed_model.clone();
-        let api_key = api_key_from_env(&cfg.api_key_env)?;
+        let api_key = optional_api_key_from_env(&cfg.api_key_env);
         let client = new_client()?;
         let id = format!("openai:{model}");
         let dim = match known_dim {
@@ -53,7 +65,7 @@ impl OpenAiEmbedder {
         client: &reqwest::blocking::Client,
         base_url: &str,
         model: &str,
-        api_key: &str,
+        api_key: &Option<String>,
     ) -> Result<usize> {
         let vectors = Self::embed_batch(client, base_url, model, api_key, &["probe".to_string()])?;
         vectors
@@ -66,7 +78,7 @@ impl OpenAiEmbedder {
         client: &reqwest::blocking::Client,
         base_url: &str,
         model: &str,
-        api_key: &str,
+        api_key: &Option<String>,
         texts: &[String],
     ) -> Result<Vec<Vec<f32>>> {
         let url = format!("{base_url}/embeddings");
@@ -74,9 +86,7 @@ impl OpenAiEmbedder {
             "model": model,
             "input": texts,
         });
-        let response = client
-            .post(&url)
-            .bearer_auth(api_key)
+        let response = maybe_bearer(client.post(&url), api_key)
             .json(&body)
             .send()
             .map_err(|e| AlexandriaError::Provider(format!("openai request failed: {e}")))?;
@@ -133,7 +143,7 @@ impl OpenAiCompleter {
         Ok(Self {
             base_url: cfg.base_url.trim_end_matches('/').to_string(),
             model: cfg.complete_model.clone(),
-            api_key: api_key_from_env(&cfg.api_key_env)?,
+            api_key: optional_api_key_from_env(&cfg.api_key_env),
             client: new_client()?,
         })
     }
@@ -167,10 +177,7 @@ impl Completer for OpenAiCompleter {
             "model": self.model,
             "messages": messages,
         });
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
+        let response = maybe_bearer(self.client.post(&url), &self.api_key)
             .json(&body)
             .send()
             .map_err(|e| AlexandriaError::Provider(format!("openai chat failed: {e}")))?;

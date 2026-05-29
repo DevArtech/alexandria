@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    archive, consolidate, expand, forget, init, link, meta, recall, reflect, remember, reindex,
-    style, threads, timeline, trace,
+    archive, catalog, consolidate, expand, forget, init, link, meta, recall, reflect, remember,
+    reindex, style, threads, timeline, trace,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -67,6 +67,12 @@ enum Commands {
         audit: bool,
         #[arg(long)]
         high_stakes: bool,
+        /// Restrict to engrams in this collection (repeatable; structured recall)
+        #[arg(long)]
+        collection: Vec<String>,
+        /// Restrict to engrams with this tag (repeatable; structured recall)
+        #[arg(long)]
+        tag: Vec<String>,
     },
     /// Expand an engram to full body and linked claims
     Expand {
@@ -74,6 +80,8 @@ enum Commands {
         #[arg(long)]
         rel: Option<String>,
     },
+    /// List the collections and tags memory is organized by (with counts)
+    Catalog,
     /// Rebuild the SQLite index from Markdown store
     Reindex,
     /// Create a typed edge between two engrams
@@ -169,8 +177,20 @@ fn main() -> Result<()> {
             budget,
             audit,
             high_stakes,
-        } => recall::run(cli.library, cli.format, query, budget, audit, high_stakes),
+            collection,
+            tag,
+        } => recall::run(
+            cli.library,
+            cli.format,
+            query,
+            budget,
+            audit,
+            high_stakes,
+            collection,
+            tag,
+        ),
         Commands::Expand { id, rel } => expand::run(cli.library, cli.format, id, rel),
+        Commands::Catalog => catalog::run(cli.library, cli.format),
         Commands::Reindex => reindex::run(cli.library, cli.format),
         Commands::Link { from, rel, to } => link::run(cli.library, cli.format, from, rel, to),
         Commands::Trace { id } => trace::run(cli.library, cli.format, id),

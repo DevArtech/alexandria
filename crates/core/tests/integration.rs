@@ -8,6 +8,13 @@ use tempfile::TempDir;
 fn test_config(dir: &TempDir) -> Config {
     let mut config = Config::load(dir.path()).unwrap();
     config.providers.embedder = "hash".into();
+    // The hash embedder's L2 distances are much larger than fastembed's
+    // (related ~1.25, unrelated >1.3), so calibrate the distance-gated
+    // thresholds to that scale for offline tests.
+    config.thresholds.semantic_weak_max_distance = 1.25;
+    config.thresholds.semantic_strong_max_distance = 1.1;
+    config.thresholds.density_radius = 1.55;
+    config.thresholds.centroid_radius = 1.4;
     config
 }
 
@@ -250,6 +257,8 @@ fn recall_audit_mode() {
                 audit: true,
                 high_stakes: false,
                 domain: None,
+                collections: vec![],
+                tags: vec![],
             },
         )
         .unwrap();

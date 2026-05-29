@@ -1,0 +1,51 @@
+services:
+  alexandria-mcp:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Bearer token clients must present. Set in .env (see .env.example).
+      ALEXANDRIA_MCP_TOKEN: ${ALEXANDRIA_MCP_TOKEN:?set ALEXANDRIA_MCP_TOKEN in .env}
+      # Only needed if the library's embedder calls a remote/keyed endpoint.
+      # For a keyless local endpoint (Ollama/LocalAI/TEI) this can be omitted.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      # An initialized Alexandria library. Create with:
+      #   alexandria init ./library
+      - ./library:/srv/alexandria
+    expose:
+      - "8080"
+    # Reaches the network for a local embedding endpoint, if you run one.
+    # If you run Ollama on the host, set base_url to
+    # http://host.docker.internal:11434/v1 in the library config and add:
+    # extra_hosts: ["host.docker.internal:host-gateway"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [alexandria-mcp]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Public hostname; Caddy provisions a Let's Encrypt cert for it.
+      ALEXANDRIA_DOMAIN: ${ALEXANDRIA_DOMAIN:?set ALEXANDRIA_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # Optional: a local OpenAI-compatible embedding endpoint.
+  # Uncomment, then set the library's [providers] embedder = "openai" with
+  # base_url = "http://ollama:11434/v1" and embed_model = "nomic-embed-text".
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ollama_models:/root/.ollama
+  #   expose:
+  #     - "11434"
+
+volumes:
+  caddy_data:
+  caddy_config:
+  # ollama_models:

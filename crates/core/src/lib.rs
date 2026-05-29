@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod config;
 pub mod consolidate;
 pub mod engram;
@@ -13,6 +14,7 @@ pub mod store;
 pub mod style;
 pub mod threads;
 
+pub use catalog::{catalog, Catalog, FacetCount};
 pub use config::Config;
 pub use consolidate::{
     consolidate_fast, consolidate_slow, ConsolidationReport, FastReflectionReport,

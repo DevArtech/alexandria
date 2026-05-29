@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use crate::OutputFormat;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     library_path: Option<PathBuf>,
     format: OutputFormat,
@@ -12,6 +13,8 @@ pub fn run(
     budget: Option<u32>,
     audit: bool,
     high_stakes: bool,
+    collections: Vec<String>,
+    tags: Vec<String>,
 ) -> Result<()> {
     let library = match library_path {
         Some(p) => Library::discover(Some(&p))?,
@@ -27,6 +30,8 @@ pub fn run(
             audit,
             high_stakes,
             domain: None,
+            collections,
+            tags,
         },
     )?;
 

@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::handlers::{
-    archive, consolidate, expand, link, meta, recall, remember, style, threads, timeline, trace,
-    ServerState,
+    archive, catalog, consolidate, expand, link, meta, recall, remember, style, threads, timeline,
+    trace, ServerState,
 };
 use crate::params::{
     ConsolidateParams, ExpandParams, IdParams, LinkParams, MetaParams, RecallParams,
@@ -65,12 +65,17 @@ impl AlexandriaMcpServer {
 
 #[tool_router]
 impl AlexandriaMcpServer {
-    #[tool(description = "Hybrid fused retrieval over Alexandria memory (lexical + semantic + graph + temporal). Returns five-state recall with response_mode and a budget-aware context tree.")]
+    #[tool(description = "Hybrid fused retrieval over Alexandria memory (lexical + semantic + graph + temporal). Returns five-state recall with response_mode and a budget-aware context tree. Optionally pass `collections` and/or `tags` to scope retrieval to those facets for deterministic, structured recall when fuzzy matching is ambiguous.")]
     async fn recall(
         &self,
         Parameters(params): Parameters<RecallParams>,
     ) -> Result<CallToolResult, McpError> {
         self.run_read(|state| recall(state, params)).await
+    }
+
+    #[tool(description = "List the collections and tags memory is organized by, with counts (the structural table of contents). Use it to orient and then scope `recall` to the right facets.")]
+    async fn catalog(&self) -> Result<CallToolResult, McpError> {
+        self.run_read(catalog).await
     }
 
     #[tool(description = "Expand an engram to full body and linked claims. Relational memory is structurally suppressed.")]

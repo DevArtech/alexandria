@@ -15,6 +15,12 @@ pub struct RecallOptions {
     pub high_stakes: bool,
     /// Domain for meta-memory lookup (first collection when None).
     pub domain: Option<String>,
+    /// Restrict retrieval to engrams in any of these collections (structured
+    /// faceted recall). Empty means no collection filter.
+    pub collections: Vec<String>,
+    /// Restrict retrieval to engrams carrying any of these tags. Empty means no
+    /// tag filter.
+    pub tags: Vec<String>,
 }
 
 /// Inputs to the rule-based posture judge (ARCHITECTURE §10.1).
@@ -170,7 +176,16 @@ impl<'a> Retrieval<'a> {
             .map(|h| (h.id.clone(), h.distance as f32))
             .collect();
         let best_semantic_distance = semantic.first().map(|h| h.distance as f32);
-        let has_lexical_match = !lexical.is_empty();
+        // The few strongest BM25 matches confer relevance even when their semantic
+        // distance is large. This rescues keyword-bearing queries that embed far
+        // from concrete claims (e.g. "who is the user") without the flood that an
+        // unbounded "any lexical term matched" rule produced. `lexical` is already
+        // ordered best-BM25-first by search_fts.
+        let lexical_top: HashSet<String> = lexical
+            .iter()
+            .take(LEXICAL_RELEVANCE_TOP_K)
+            .map(|h| h.id.clone())
+            .collect();
 
         let shape_weight = self.config.shape.weight;
         let mut fused = fuse_rrf_multi(
@@ -195,6 +210,48 @@ impl<'a> Retrieval<'a> {
             }
         }
 
+        // Structured/faceted recall: when collection/tag filters are supplied,
+        // restrict results to engrams matching them and enumerate the full set
+        // (not just fuzzy top-k). Filter-matched hits carry a "structural" signal
+        // and are relevant by construction — deterministic, distance-independent.
+        let structural_filter = !options.collections.is_empty() || !options.tags.is_empty();
+        if structural_filter {
+            let allowed: HashSet<String> = self
+                .index
+                .engram_ids_matching(&options.collections, &options.tags)?
+                .into_iter()
+                .collect();
+            fused.retain(|h| allowed.contains(&h.id));
+            for hit in &mut fused {
+                hit.signals.push("structural".to_string());
+            }
+            let present: HashSet<String> = fused.iter().map(|h| h.id.clone()).collect();
+            for id in &allowed {
+                if present.contains(id) {
+                    continue;
+                }
+                if let Some(row) = self.index.get_engram(id)? {
+                    if row.tier == Tier::Relational {
+                        continue; // relational memory is never surfaced as quotable text
+                    }
+                    fused.push(FusedHit {
+                        id: row.id.clone(),
+                        claim: row.claim,
+                        tier: tier_label(row.tier).to_string(),
+                        status: status_label(row.status).to_string(),
+                        score: 0.0,
+                        signals: vec!["structural".to_string()],
+                        collections: self.fetch_collections(id).unwrap_or_default(),
+                    });
+                }
+            }
+            fused.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
         let neighbor_count = self
             .index
             .neighbors_within(&query_vec, thresholds.density_radius)?;
@@ -207,7 +264,7 @@ impl<'a> Retrieval<'a> {
         let state = classify_state(
             &fused,
             &semantic_distances,
-            has_lexical_match,
+            &lexical_top,
             best_semantic_distance,
             thresholds,
             neighbor_count,
@@ -268,7 +325,7 @@ impl<'a> Retrieval<'a> {
             self.index,
             &fused,
             &semantic_distances,
-            has_lexical_match,
+            &lexical_top,
             budget,
             state,
             thresholds,
@@ -577,29 +634,73 @@ fn hit_semantically_relevant(
         .unwrap_or(false)
 }
 
+/// How many top BM25 lexical matches are allowed to confer relevance on their own.
+/// Small and bounded: enough to rescue keyword queries, not so many that ORed
+/// common terms flood the result. (Larger values re-admit topically-unrelated
+/// documents that happen to share a query term and sit at the same distance as a
+/// genuinely-relevant record — a conflict best resolved by structured retrieval.)
+const LEXICAL_RELEVANCE_TOP_K: usize = 3;
+
+/// Multiplier on `semantic_weak_max_distance` giving the looser ceiling within
+/// which a top BM25 lexical match may still confer relevance. Lets a keyword
+/// query rescue a record that embeds just beyond the strong band (e.g. abstract
+/// "who is the user" → the user fact at a slightly larger distance) while still
+/// refusing to rescue lexical matches that are genuinely semantically unrelated
+/// (e.g. an incidental shared word like "best").
+const LEXICAL_ASSIST_DISTANCE_FACTOR: f32 = 1.10;
+
 fn hit_is_relevant(
     hit: &FusedHit,
     semantic_distances: &HashMap<String, f32>,
-    _has_lexical_match: bool,
+    lexical_top: &HashSet<String>,
     thresholds: &ThresholdsConfig,
 ) -> bool {
-    hit.signals.iter().any(|s| s == "lexical")
-        || hit_semantically_relevant(hit, semantic_distances, thresholds.semantic_weak_max_distance)
+    // Structured path: the hit matched an explicit collection/tag filter.
+    if hit.signals.iter().any(|s| s == "structural") {
+        return true;
+    }
+    // Strong path: semantically close.
+    if hit_semantically_relevant(hit, semantic_distances, thresholds.semantic_weak_max_distance) {
+        return true;
+    }
+    // Lexical-assisted path: one of the few strongest BM25 matches AND still in
+    // the semantic neighborhood (within the looser assist ceiling). A hit with no
+    // semantic distance at all (outside the KNN candidate set in a large corpus)
+    // is trusted on its lexical strength alone — a rare-term exact match.
+    if lexical_top.contains(&hit.id) {
+        let ceiling = thresholds.semantic_weak_max_distance * LEXICAL_ASSIST_DISTANCE_FACTOR;
+        return semantic_distances
+            .get(&hit.id)
+            .map(|&d| d <= ceiling)
+            .unwrap_or(true);
+    }
+    false
 }
 
 fn classify_state(
     fused: &[FusedHit],
     semantic_distances: &HashMap<String, f32>,
-    has_lexical_match: bool,
-    best_semantic_distance: Option<f32>,
+    lexical_top: &HashSet<String>,
+    _best_semantic_distance: Option<f32>,
     thresholds: &ThresholdsConfig,
     neighbor_count: u32,
     centroid_near: bool,
 ) -> RecallState {
-    let semantically_relevant = best_semantic_distance
-        .map(|d| d <= thresholds.semantic_weak_max_distance)
-        .unwrap_or(false);
-    let any_relevant = has_lexical_match || semantically_relevant;
+    // Structured/faceted recall is a deterministic, confident answer: if any hit
+    // matched an explicit collection/tag filter, that is a strong hit.
+    if fused
+        .iter()
+        .any(|h| h.signals.iter().any(|s| s == "structural"))
+    {
+        return RecallState::StrongHit;
+    }
+
+    // Gap/nothing detection must stay reachable even when a common OR-term
+    // produces a broad lexical match, so base "any relevant" on the principled
+    // per-hit relevance predicate (semantic distance + bounded top-K lexical).
+    let any_relevant = fused
+        .iter()
+        .any(|h| hit_is_relevant(h, semantic_distances, lexical_top, thresholds));
 
     if !any_relevant {
         if neighbor_count >= thresholds.density_min_count {
@@ -613,7 +714,7 @@ fn classify_state(
 
     let top = fused
         .iter()
-        .find(|h| hit_is_relevant(h, semantic_distances, has_lexical_match, thresholds));
+        .find(|h| hit_is_relevant(h, semantic_distances, lexical_top, thresholds));
 
     let Some(top) = top else {
         return RecallState::WeakHit;
@@ -689,7 +790,7 @@ fn build_context_tree(
     index: &Index,
     fused: &[FusedHit],
     semantic_distances: &HashMap<String, f32>,
-    has_lexical_match: bool,
+    lexical_top: &HashSet<String>,
     budget: u32,
     state: RecallState,
     thresholds: &ThresholdsConfig,
@@ -706,8 +807,9 @@ fn build_context_tree(
     let qualifying: Vec<_> = fused
         .iter()
         .filter(|h| {
-            h.score >= thresholds.weak_cutoff
-                && hit_is_relevant(h, semantic_distances, has_lexical_match, thresholds)
+            let structural = h.signals.iter().any(|s| s == "structural");
+            (structural || h.score >= thresholds.weak_cutoff)
+                && hit_is_relevant(h, semantic_distances, lexical_top, thresholds)
         })
         .collect();
 
@@ -801,6 +903,28 @@ fn tree_total_tokens(tree: &ContextTree) -> u32 {
         .sum()
 }
 
+/// English stop words bundled from `stopwords_en.txt` (NLTK's canonical list).
+/// Removing them keeps the OR-combined lexical query from matching documents on
+/// filler words alone (e.g. "best pizza in Naples" should not lexically match
+/// every engram containing "in"), which would otherwise let the bounded top-K
+/// lexical fallback rescue genuinely-unrelated queries.
+static FTS_STOPWORDS: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+
+fn stopwords() -> &'static HashSet<String> {
+    FTS_STOPWORDS.get_or_init(|| {
+        include_str!("stopwords_en.txt")
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|word| word.to_ascii_lowercase())
+            .collect()
+    })
+}
+
+fn is_stopword(token: &str) -> bool {
+    stopwords().contains(&token.to_ascii_lowercase())
+}
+
 /// Escape a user query for FTS5 MATCH.
 ///
 /// Terms are combined with `OR` rather than FTS5's implicit `AND`, so a verbose
@@ -809,10 +933,20 @@ fn tree_total_tokens(tree: &ContextTree) -> u32 {
 /// downstream by BM25 ranking, RRF fusion, and the distance-gated five-state
 /// classifier; an implicit `AND` would instead require every term to appear,
 /// causing conversational queries to collapse to `nothing`.
+///
+/// Stop words are dropped so filler terms don't produce spurious lexical matches.
+/// If a query is made up entirely of stop words, they are kept (so the query is
+/// not empty) and semantic retrieval still applies.
 pub fn escape_fts_query(query: &str) -> String {
-    query
-        .split_whitespace()
-        .filter(|t| !t.is_empty())
+    let tokens: Vec<&str> = query.split_whitespace().filter(|t| !t.is_empty()).collect();
+    let content: Vec<&str> = tokens
+        .iter()
+        .copied()
+        .filter(|t| !is_stopword(t))
+        .collect();
+    let kept = if content.is_empty() { tokens } else { content };
+
+    kept.into_iter()
         .map(|token| {
             let needs_quote = token.chars().any(|c| !c.is_alphanumeric() && c != '_')
                 || token.eq_ignore_ascii_case("AND")
@@ -911,7 +1045,10 @@ mod tests {
     #[test]
     fn escape_fts_query_quotes_special_tokens() {
         assert_eq!(escape_fts_query("C++"), "\"C++\"");
-        assert_eq!(escape_fts_query("foo AND bar"), "foo OR \"AND\" OR bar");
+        // "and" is a dropped stop word; remaining content terms are OR-combined.
+        assert_eq!(escape_fts_query("foo AND bar"), "foo OR bar");
+        // An all-stop-word query keeps its tokens so the query is never empty.
+        assert_eq!(escape_fts_query("what is it"), "what OR is OR it");
     }
 
     #[test]
@@ -953,7 +1090,7 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert("a".into(), 0.1f32);
         assert_eq!(
-            classify_state(&strong, &dist, true, Some(0.1), &thresholds, 0, false),
+            classify_state(&strong, &dist, &HashSet::new(), Some(0.1), &thresholds, 0, false),
             RecallState::StrongHit
         );
     }
@@ -1024,7 +1161,7 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert("a".into(), 0.9f32);
         assert_eq!(
-            classify_state(&weak, &dist, false, Some(0.9), &thresholds, 5, false),
+            classify_state(&weak, &dist, &HashSet::new(), Some(0.9), &thresholds, 5, false),
             RecallState::HighConfidenceGap
         );
     }
@@ -1047,7 +1184,7 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert("a".into(), 0.9f32);
         assert_eq!(
-            classify_state(&weak, &dist, false, Some(0.9), &thresholds, 0, true),
+            classify_state(&weak, &dist, &HashSet::new(), Some(0.9), &thresholds, 0, true),
             RecallState::LowConfidenceGap
         );
     }
