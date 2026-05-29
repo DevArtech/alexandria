@@ -1,0 +1,29 @@
+# Rust / Cargo
+/target/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Environment / secrets
+.env
+.env.*
+
+# Alexandria — rebuildable index cache (plain-text store is source of truth)
+**/.alexandria/index.db
+**/.alexandria/fast_reflections/
+
+# Local libraries created during development (use `alexandria init` in your own path)
+/my-library/
+
+# Optional: ignore any SQLite DB outside .alexandria (belt-and-suspenders)
+**/*.db
+
+# Local embedding model caches (M2+ providers)
+.fastembed_cache/
