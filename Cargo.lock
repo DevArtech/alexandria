@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "alexandria"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alexandria-core",
  "anyhow",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "alexandria-brain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alexandria-core",
  "anyhow",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "alexandria-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "alexandria-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alexandria-core",
  "anyhow",
