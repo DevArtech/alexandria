@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use alexandria_core::{Config, Index, Library, RecallOptions, Retrieval, dominant_facet};
+use alexandria_core::{dominant_facet, Config, Index, Library, RecallOptions, Retrieval};
 use anyhow::Result;
 
 use crate::OutputFormat;
@@ -54,7 +54,10 @@ fn print_human(result: &alexandria_core::RecallResult) {
                 alexandria_core::FacetKind::Collection => "collection",
                 alexandria_core::FacetKind::Tag => "tag",
             };
-            println!("  {kind}: {} ({}) — pass --{kind} {} to scope", f.name, f.count, f.name);
+            println!(
+                "  {kind}: {} ({}) — pass --{kind} {} to scope",
+                f.name, f.count, f.name
+            );
         }
         if let Some(dominant) = dominant_facet(&result.detected_facets) {
             println!(

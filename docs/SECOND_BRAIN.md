@@ -27,19 +27,7 @@ Nothing in `crates/core` or `crates/cli` changes behavior — they remain the st
    - Add `target/release/` to your PATH after `cargo build --release`, or
    - Set `ALEXANDRIA_MCP=/abs/path/to/alexandria-mcp` when running brain.
 
----
-
-## Build
-
-```bash
-cargo build --release
-# produces:
-#   target/release/alexandria        (standalone memory CLI)
-#   target/release/alexandria-mcp    (MCP server for Codex)
-#   target/release/alexandria-brain  (second-brain orchestrator)
-```
-
-Recommended: symlink or copy the three binaries into a directory on your PATH.
+Build the three binaries (`cargo build --release`) and put them on your PATH — see the [README](../README.md#build).
 
 ---
 
@@ -186,6 +174,5 @@ The core memory model, retrieval, consolidation, and CLI are unchanged. Brain is
 
 ## See also
 
-- [README](../README.md) — build, quickstart, configuration
-- [OVERVIEW.md](OVERVIEW.md) — full application summary
+- [README](../README.md) — build, quickstart, configuration, remote deployment
 - [ARCHITECTURE.md](ARCHITECTURE.md) — memory model and retrieval design

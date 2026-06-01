@@ -3,7 +3,9 @@ mod http;
 mod ollama;
 mod openai;
 
-use fastembed::{EmbeddingModel, InitOptions, RerankInitOptions, RerankerModel, TextEmbedding, TextRerank};
+use fastembed::{
+    EmbeddingModel, InitOptions, RerankInitOptions, RerankerModel, TextEmbedding, TextRerank,
+};
 
 use crate::config::Config;
 use crate::error::{AlexandriaError, Result};
@@ -225,7 +227,9 @@ impl FastEmbedReranker {
 
 fn parse_reranker_model(name: &str) -> Result<RerankerModel> {
     match name {
-        "JINARerankerV1TurboEn" | "jina-reranker-v1-turbo-en" => Ok(RerankerModel::JINARerankerV1TurboEn),
+        "JINARerankerV1TurboEn" | "jina-reranker-v1-turbo-en" => {
+            Ok(RerankerModel::JINARerankerV1TurboEn)
+        }
         "BGERerankerBase" | "bge-reranker-base" => Ok(RerankerModel::BGERerankerBase),
         "BGERerankerV2M3" | "bge-reranker-v2-m3" => Ok(RerankerModel::BGERerankerV2M3),
         "JINARerankerV2BaseMultiligual" | "jina-reranker-v2-base-multilingual" => {

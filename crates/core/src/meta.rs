@@ -1,7 +1,7 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 
 use crate::error::Result;
 use crate::index::Index;

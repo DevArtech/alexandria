@@ -26,12 +26,7 @@ fn print_human(report: &alexandria_core::CoverageReport) {
     if !report.detected_facets.is_empty() {
         println!("detected_facets:");
         for f in &report.detected_facets {
-            println!(
-                "  {:?} {} ({})",
-                f.kind,
-                f.name,
-                f.count
-            );
+            println!("  {:?} {} ({})", f.kind, f.name, f.count);
         }
     }
     println!("engram_count: {}", report.engram_count);

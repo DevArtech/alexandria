@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use alexandria_core::{build_completer, Config, Index, Library, consolidate_slow};
+use alexandria_core::{build_completer, consolidate_slow, Config, Index, Library};
 use anyhow::Result;
 
 use crate::OutputFormat;
@@ -36,7 +36,10 @@ pub fn print_human(report: &alexandria_core::ConsolidationReport) {
         println!("  {item}");
     }
     println!("decayed: {}", report.decayed.len());
-    println!("collections_resummarized: {}", report.collections_resummarized.len());
+    println!(
+        "collections_resummarized: {}",
+        report.collections_resummarized.len()
+    );
     for item in &report.collections_resummarized {
         println!("  {item}");
     }

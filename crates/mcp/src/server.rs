@@ -13,8 +13,7 @@ use anyhow::Result;
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router,
-    ErrorData as McpError, ServerHandler,
+    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
 use tokio::sync::Mutex;
 
@@ -65,7 +64,9 @@ impl AlexandriaMcpServer {
 
 #[tool_router]
 impl AlexandriaMcpServer {
-    #[tool(description = "Hybrid fused retrieval over Alexandria memory (lexical + semantic + graph + temporal). Returns five-state recall with response_mode and a budget-aware context tree. Optionally pass `collections` and/or `tags` to scope retrieval to those facets for deterministic, structured recall when fuzzy matching is ambiguous.")]
+    #[tool(
+        description = "Hybrid fused retrieval over Alexandria memory (lexical + semantic + graph + temporal). Returns five-state recall with response_mode and a budget-aware context tree. Optionally pass `collections` and/or `tags` to scope retrieval to those facets for deterministic, structured recall when fuzzy matching is ambiguous."
+    )]
     async fn recall(
         &self,
         Parameters(params): Parameters<RecallParams>,
@@ -73,12 +74,16 @@ impl AlexandriaMcpServer {
         self.run_read(|state| recall(state, params)).await
     }
 
-    #[tool(description = "List the collections and tags memory is organized by, with counts (the structural table of contents). Use it to orient and then scope `recall` to the right facets.")]
+    #[tool(
+        description = "List the collections and tags memory is organized by, with counts (the structural table of contents). Use it to orient and then scope `recall` to the right facets."
+    )]
     async fn catalog(&self) -> Result<CallToolResult, McpError> {
         self.run_read(catalog).await
     }
 
-    #[tool(description = "Memory-density x-ray for a topic: engram counts, provenance depth, recency, detail ratio, and recommended next step (recall/expand/survey).")]
+    #[tool(
+        description = "Memory-density x-ray for a topic: engram counts, provenance depth, recency, detail ratio, and recommended next step (recall/expand/survey)."
+    )]
     async fn coverage(
         &self,
         Parameters(params): Parameters<CoverageParams>,
@@ -86,7 +91,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| coverage(state, params)).await
     }
 
-    #[tool(description = "Exhaustive-but-budgeted topic survey: enumerate relevant engrams with claim/body token costs and expansion hints.")]
+    #[tool(
+        description = "Exhaustive-but-budgeted topic survey: enumerate relevant engrams with claim/body token costs and expansion hints."
+    )]
     async fn survey(
         &self,
         Parameters(params): Parameters<SurveyParams>,
@@ -94,7 +101,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| survey(state, params)).await
     }
 
-    #[tool(description = "Concept graph / relationship map from an engram id or topic. Returns typed edges grouped by rel with optional mermaid diagram.")]
+    #[tool(
+        description = "Concept graph / relationship map from an engram id or topic. Returns typed edges grouped by rel with optional mermaid diagram."
+    )]
     async fn map(
         &self,
         Parameters(params): Parameters<MapParams>,
@@ -102,7 +111,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| map(state, params)).await
     }
 
-    #[tool(description = "Expand an engram to full body and linked claims. Relational memory is structurally suppressed.")]
+    #[tool(
+        description = "Expand an engram to full body and linked claims. Relational memory is structurally suppressed."
+    )]
     async fn expand(
         &self,
         Parameters(params): Parameters<ExpandParams>,
@@ -110,7 +121,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| expand(state, params)).await
     }
 
-    #[tool(description = "Write a new engram. First line is the claim; remaining lines are the body.")]
+    #[tool(
+        description = "Write a new engram. First line is the claim; remaining lines are the body."
+    )]
     async fn remember(
         &self,
         Parameters(params): Parameters<RememberParams>,
@@ -118,7 +131,9 @@ impl AlexandriaMcpServer {
         self.run(|state| remember(state, params)).await
     }
 
-    #[tool(description = "Create a typed edge between two engrams (supports, conflicts_confirmed, supersedes, etc.).")]
+    #[tool(
+        description = "Create a typed edge between two engrams (supports, conflicts_confirmed, supersedes, etc.)."
+    )]
     async fn link(
         &self,
         Parameters(params): Parameters<LinkParams>,
@@ -134,7 +149,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| trace(state, params)).await
     }
 
-    #[tool(description = "Episodic timeline view over engrams, optionally filtered by date range and tier.")]
+    #[tool(
+        description = "Episodic timeline view over engrams, optionally filtered by date range and tier."
+    )]
     async fn timeline(
         &self,
         Parameters(params): Parameters<TimelineParams>,
@@ -142,7 +159,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| timeline(state, params)).await
     }
 
-    #[tool(description = "List open threads (unresolved_by_design engrams), optionally filtered by surface trigger.")]
+    #[tool(
+        description = "List open threads (unresolved_by_design engrams), optionally filtered by surface trigger."
+    )]
     async fn threads(
         &self,
         Parameters(params): Parameters<ThreadsParams>,
@@ -150,7 +169,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| threads(state, params)).await
     }
 
-    #[tool(description = "Relational generation parameters for tone and pacing. Never quotable bodies — numeric profile only.")]
+    #[tool(
+        description = "Relational generation parameters for tone and pacing. Never quotable bodies — numeric profile only."
+    )]
     async fn style(&self) -> Result<CallToolResult, McpError> {
         self.run_read(style).await
     }
@@ -171,7 +192,9 @@ impl AlexandriaMcpServer {
         self.run_read(|state| archive(state, params)).await
     }
 
-    #[tool(description = "Run slow consolidation (dedupe, promote, decay, resummarize) or fast reflection when fast=true.")]
+    #[tool(
+        description = "Run slow consolidation (dedupe, promote, decay, resummarize) or fast reflection when fast=true."
+    )]
     async fn consolidate(
         &self,
         Parameters(params): Parameters<ConsolidateParams>,

@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::error::{AlexandriaError, Result};
-use crate::provider::http::{check_response, new_client, optional_api_key_from_env};
+use crate::provider::http::{body_snippet, check_response, new_client, optional_api_key_from_env};
 use crate::provider::{Completer, Embedder, Prompt};
 
 pub struct OpenAiEmbedder {
@@ -68,10 +68,9 @@ impl OpenAiEmbedder {
         api_key: &Option<String>,
     ) -> Result<usize> {
         let vectors = Self::embed_batch(client, base_url, model, api_key, &["probe".to_string()])?;
-        vectors
-            .first()
-            .map(|v| v.len())
-            .ok_or_else(|| AlexandriaError::Provider("openai embed probe returned no vectors".into()))
+        vectors.first().map(|v| v.len()).ok_or_else(|| {
+            AlexandriaError::Provider("openai embed probe returned no vectors".into())
+        })
     }
 
     fn embed_batch(
@@ -187,13 +186,18 @@ impl Completer for OpenAiCompleter {
             .map_err(|e| AlexandriaError::Provider(format!("openai read body failed: {e}")))?;
         check_response("openai", status, &text_body)?;
         let parsed: OpenAiChatResponse = serde_json::from_str(&text_body).map_err(|e| {
-            AlexandriaError::Provider(format!("openai invalid JSON: {e}; body: {text_body}"))
+            AlexandriaError::Provider(format!(
+                "openai invalid JSON: {e}; body: {}",
+                body_snippet(&text_body)
+            ))
         })?;
         parsed
             .choices
             .into_iter()
             .next()
             .map(|c| c.message.content)
-            .ok_or_else(|| AlexandriaError::Provider("openai chat returned no choices".into()).into())
+            .ok_or_else(|| {
+                AlexandriaError::Provider("openai chat returned no choices".into()).into()
+            })
     }
 }

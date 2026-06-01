@@ -1,7 +1,7 @@
 use alexandria_core::{
     build_embedder, consolidate_fast, list_threads, meta_report, rebuild_meta_index,
     record_correction, record_gap_outcome, style_profile, Config, Engram, Graph, Index, Library,
-    Ops, RecallOptions, RecallState, ResponseMode, Rel, Retrieval, Source, Status, Tier,
+    Ops, RecallOptions, RecallState, Rel, ResponseMode, Retrieval, Source, Status, Tier,
 };
 use tempfile::TempDir;
 
@@ -62,7 +62,9 @@ fn init_remember_recall_flow() {
         .collect();
     assert!(!hits.is_empty() || result.state == RecallState::HighConfidenceGap);
     if !hits.is_empty() {
-        assert!(hits.iter().any(|h| h.claim.contains("hybrid fused retrieval")));
+        assert!(hits
+            .iter()
+            .any(|h| h.claim.contains("hybrid fused retrieval")));
     }
 }
 
@@ -72,7 +74,12 @@ fn reindex_rebuilds_from_text_after_db_deleted() {
     let lib = Library::init(dir.path()).unwrap();
     let config = test_config(&dir);
 
-    let engram = Engram::new("reindex test claim", "body", Tier::Semantic, Status::Confirmed);
+    let engram = Engram::new(
+        "reindex test claim",
+        "body",
+        Tier::Semantic,
+        Status::Confirmed,
+    );
     let path = lib.write_engram(&engram).unwrap();
 
     let index = open_index(&lib, &config);
@@ -124,7 +131,12 @@ fn embedder_change_invalidates_vec_index() {
     let lib = Library::init(dir.path()).unwrap();
     let config = test_config(&dir);
 
-    let engram = Engram::new("embedder invalidation", "body", Tier::Semantic, Status::Confirmed);
+    let engram = Engram::new(
+        "embedder invalidation",
+        "body",
+        Tier::Semantic,
+        Status::Confirmed,
+    );
     let path = lib.write_engram(&engram).unwrap();
 
     let index = open_index(&lib, &config);
@@ -231,9 +243,7 @@ fn link_and_trace_flow() {
     ops.link(&a.id, Rel::Supports, &b.id).unwrap();
 
     let graph = Graph::new(&index);
-    let walk = graph
-        .traverse(&a.id, Some(&[Rel::Supports]), 1)
-        .unwrap();
+    let walk = graph.traverse(&a.id, Some(&[Rel::Supports]), 1).unwrap();
     assert_eq!(walk.nodes.len(), 1);
     assert_eq!(walk.nodes[0].id, b.id);
 }
@@ -313,7 +323,9 @@ fn remember_surface_when_persisted_in_frontmatter() {
 
     let result = list_threads(&lib, &index, Some("competitors")).unwrap();
     assert_eq!(result.threads.len(), 1);
-    assert!(result.threads[0].surface_when.contains(&"topic:competitors".to_string()));
+    assert!(result.threads[0]
+        .surface_when
+        .contains(&"topic:competitors".to_string()));
 }
 
 #[test]
@@ -323,13 +335,7 @@ fn meta_gap_false_positive_rate_updates() {
     let config = test_config(&dir);
     let index = open_index(&lib, &config);
 
-    record_gap_outcome(
-        &lib,
-        "demo/domain",
-        "high_confidence_gap",
-        true,
-    )
-    .unwrap();
+    record_gap_outcome(&lib, "demo/domain", "high_confidence_gap", true).unwrap();
     rebuild_meta_index(&index, &lib).unwrap();
 
     let report = meta_report(&lib, &index, Some("demo/domain")).unwrap();
@@ -364,7 +370,8 @@ fn style_profile_from_relational() {
         Tier::Relational,
         Status::Confirmed,
     );
-    rel.tags.push("evidence:projects=2,task_types=1,registers=1".into());
+    rel.tags
+        .push("evidence:projects=2,task_types=1,registers=1".into());
     lib.write_engram(&rel).unwrap();
 
     let profile = style_profile(&lib, None).unwrap();

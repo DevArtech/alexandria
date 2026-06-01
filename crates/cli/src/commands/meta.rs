@@ -57,8 +57,14 @@ pub fn run(opts: MetaOptions) -> Result<()> {
             }
             println!("reliability: {:.3}", report.reliability);
             println!("recent_corrections (30d): {}", report.recent_corrections);
-            println!("gap_false_positive_rate: {:.3}", report.gap_false_positive_rate);
-            println!("promotion_reversal_rate: {:.3}", report.promotion_reversal_rate);
+            println!(
+                "gap_false_positive_rate: {:.3}",
+                report.gap_false_positive_rate
+            );
+            println!(
+                "promotion_reversal_rate: {:.3}",
+                report.promotion_reversal_rate
+            );
             println!(
                 "totals: corrections={} gaps={} reversals={}",
                 report.total_corrections, report.total_gaps, report.total_reversals

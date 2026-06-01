@@ -56,13 +56,10 @@ impl Default for MapOptions {
 }
 
 /// Build a concept graph from an engram id or topic string.
-pub fn map(
-    seed: &str,
-    index: &Index,
-    config: &Config,
-    options: MapOptions,
-) -> Result<MapResult> {
-    let budget = options.budget.unwrap_or(config.budgets.default_recall_tokens);
+pub fn map(seed: &str, index: &Index, config: &Config, options: MapOptions) -> Result<MapResult> {
+    let budget = options
+        .budget
+        .unwrap_or(config.budgets.default_recall_tokens);
     let depth = options.depth.clamp(1, 10);
     let rels_ref = options.rels.as_deref();
 
@@ -138,10 +135,7 @@ fn resolve_seeds(seed: &str, index: &Index, config: &Config) -> Result<Vec<Strin
     ids.sort();
     ids.dedup();
     if ids.is_empty() {
-        let fts = index.fts_engram_ids(
-            &crate::retrieval::escape_fts_query(seed),
-            3,
-        )?;
+        let fts = index.fts_engram_ids(&crate::retrieval::escape_fts_query(seed), 3)?;
         return Ok(fts);
     }
     Ok(ids)
@@ -203,10 +197,7 @@ fn render_mermaid(seed_ids: &[String], groups: &[MapRelGroup]) -> String {
     for group in groups {
         for edge in &group.edges {
             let rel = edge.rel.replace('_', " ");
-            lines.push(format!(
-                "  {} -->|{}| {}",
-                edge.from_id, rel, edge.to_id
-            ));
+            lines.push(format!("  {} -->|{}| {}", edge.from_id, rel, edge.to_id));
         }
     }
 

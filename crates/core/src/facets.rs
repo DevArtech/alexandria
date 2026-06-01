@@ -77,9 +77,9 @@ fn facet_matches_tokens(facet_name: &str, tokens: &[String]) -> bool {
     let normalized = normalize_facet_name(facet_name);
     let segments = facet_segment_tokens(facet_name);
 
-    tokens.iter().any(|token| {
-        *token == normalized || segments.iter().any(|seg| seg == token)
-    })
+    tokens
+        .iter()
+        .any(|token| *token == normalized || segments.iter().any(|seg| seg == token))
 }
 
 /// Detect collections and tags whose names overlap with query tokens.
@@ -147,7 +147,10 @@ mod tests {
 
     #[test]
     fn facet_matches_hatco() {
-        assert!(facet_matches_tokens("hatco", &tokenize_query("tell me about Hatco")));
+        assert!(facet_matches_tokens(
+            "hatco",
+            &tokenize_query("tell me about Hatco")
+        ));
         assert!(facet_matches_tokens(
             "meridian/cartographer",
             &tokenize_query("cartographer agent")

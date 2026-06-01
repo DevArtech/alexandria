@@ -1,13 +1,5 @@
 // Centralized, validated configuration sourced from the environment.
 
-function req(name) {
-  const v = process.env[name];
-  if (!v || !v.trim()) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return v.trim();
-}
-
 function opt(name, fallback) {
   const v = process.env[name];
   return v && v.trim() ? v.trim() : fallback;
@@ -39,11 +31,23 @@ export function loadConfig(env = process.env) {
 
     const upstreamToken = opt("ALEXANDRIA_MCP_TOKEN");
     const allowLegacyStaticToken = bool("ALLOW_LEGACY_STATIC_TOKEN", false);
-    const legacyBearerToken = opt("LEGACY_BEARER_TOKEN", upstreamToken);
-    if (allowLegacyStaticToken && !legacyBearerToken) {
-      throw new Error(
-        "ALLOW_LEGACY_STATIC_TOKEN=true requires LEGACY_BEARER_TOKEN or ALEXANDRIA_MCP_TOKEN.",
-      );
+    // The client-facing legacy bearer MUST be distinct from the secret the proxy
+    // injects upstream — otherwise a single leaked client token also crosses the
+    // internal trust boundary. No silent fallback to ALEXANDRIA_MCP_TOKEN.
+    const legacyBearerToken = opt("LEGACY_BEARER_TOKEN");
+    if (allowLegacyStaticToken) {
+      if (!legacyBearerToken) {
+        throw new Error(
+          "ALLOW_LEGACY_STATIC_TOKEN=true requires a distinct LEGACY_BEARER_TOKEN " +
+            "(do not reuse ALEXANDRIA_MCP_TOKEN).",
+        );
+      }
+      if (upstreamToken && legacyBearerToken === upstreamToken) {
+        throw new Error(
+          "LEGACY_BEARER_TOKEN must differ from ALEXANDRIA_MCP_TOKEN; reusing the " +
+            "upstream token collapses the client/internal trust boundary.",
+        );
+      }
     }
 
     const scopes = list("OAUTH_SCOPES").length
@@ -76,9 +80,29 @@ export function loadConfig(env = process.env) {
       loginUsername: opt("LOGIN_USERNAME", "admin"),
       loginPassword: opt("LOGIN_PASSWORD", ""),
       sessionCookieName: opt("SESSION_COOKIE_NAME", "alexandria_session"),
+      csrfCookieName: opt("CSRF_COOKIE_NAME", "alexandria_csrf"),
       sessionTtlSec: Number(opt("SESSION_TTL_SEC", String(24 * 3600))),
       authCodeTtlSec: Number(opt("AUTH_CODE_TTL_SEC", "600")),
       accessTokenTtlSec: Number(opt("ACCESS_TOKEN_TTL_SEC", "3600")),
+
+      // DoS hardening. 0 disables a given timeout. Body cap applies to the
+      // unauthenticated OAuth/login endpoints that parse a request body.
+      trustProxy: bool("TRUST_PROXY", false),
+      maxBodyBytes: Number(opt("MAX_BODY_BYTES", String(64 * 1024))),
+      headersTimeoutMs: Number(opt("HEADERS_TIMEOUT_MS", "60000")),
+      requestTimeoutMs: Number(opt("REQUEST_TIMEOUT_MS", "120000")),
+      // Outgoing (proxy -> upstream) socket timeout. Default 0 to avoid cutting
+      // long-lived streamable-HTTP/SSE responses; set a finite value if upstream
+      // can hang.
+      proxyTimeoutMs: Number(opt("PROXY_TIMEOUT_MS", "0")),
+
+      // Per-IP brute-force / abuse protection on the public auth endpoints.
+      rateLimitWindowMs: Number(opt("RATE_LIMIT_WINDOW_MS", String(15 * 60 * 1000))),
+      loginRateLimitMax: Number(opt("LOGIN_RATE_LIMIT_MAX", "10")),
+      registerRateLimitMax: Number(opt("REGISTER_RATE_LIMIT_MAX", "20")),
+
+      // Localhost/loopback redirect URIs are dev-only; off by default in prod.
+      allowLocalhostRedirects: bool("ALLOW_LOCALHOST_REDIRECTS", false),
 
       logLevel: opt("LOG_LEVEL", "info"),
     };

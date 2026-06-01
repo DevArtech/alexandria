@@ -20,9 +20,7 @@ fn register_vec_extension() {
         use rusqlite::ffi::sqlite3_auto_extension;
         use sqlite_vec::sqlite3_vec_init;
         #[allow(clippy::missing_transmute_annotations)]
-        sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite3_vec_init as *const (),
-        )));
+        sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
     });
 }
 
@@ -253,9 +251,10 @@ impl Index {
     }
 
     fn ensure_embedder(&self) -> Result<()> {
-        let mut guard = self.embedder.lock().map_err(|e| {
-            AlexandriaError::Other(anyhow::anyhow!("embedder lock poisoned: {e}"))
-        })?;
+        let mut guard = self
+            .embedder
+            .lock()
+            .map_err(|e| AlexandriaError::Other(anyhow::anyhow!("embedder lock poisoned: {e}")))?;
         if guard.is_some() {
             return Ok(());
         }
@@ -292,17 +291,19 @@ impl Index {
 
     fn with_embedder<R>(&self, f: impl FnOnce(&dyn Embedder) -> Result<R>) -> Result<R> {
         self.ensure_embedder()?;
-        let guard = self.embedder.lock().map_err(|e| {
-            AlexandriaError::Other(anyhow::anyhow!("embedder lock poisoned: {e}"))
-        })?;
+        let guard = self
+            .embedder
+            .lock()
+            .map_err(|e| AlexandriaError::Other(anyhow::anyhow!("embedder lock poisoned: {e}")))?;
         let embedder = guard.as_ref().unwrap();
         f(embedder.as_ref())
     }
 
     fn ensure_reranker(&self) -> Result<()> {
-        let mut guard = self.reranker.lock().map_err(|e| {
-            AlexandriaError::Other(anyhow::anyhow!("reranker lock poisoned: {e}"))
-        })?;
+        let mut guard = self
+            .reranker
+            .lock()
+            .map_err(|e| AlexandriaError::Other(anyhow::anyhow!("reranker lock poisoned: {e}")))?;
         if guard.is_some() {
             return Ok(());
         }
@@ -315,11 +316,15 @@ impl Index {
         Ok(())
     }
 
-    pub fn with_reranker<R>(&self, f: impl FnOnce(Option<&dyn Reranker>) -> Result<R>) -> Result<R> {
+    pub fn with_reranker<R>(
+        &self,
+        f: impl FnOnce(Option<&dyn Reranker>) -> Result<R>,
+    ) -> Result<R> {
         self.ensure_reranker()?;
-        let guard = self.reranker.lock().map_err(|e| {
-            AlexandriaError::Other(anyhow::anyhow!("reranker lock poisoned: {e}"))
-        })?;
+        let guard = self
+            .reranker
+            .lock()
+            .map_err(|e| AlexandriaError::Other(anyhow::anyhow!("reranker lock poisoned: {e}")))?;
         match guard.as_ref() {
             Some(r) => f(Some(r.as_ref())),
             None => f(None),
@@ -352,9 +357,10 @@ impl Index {
     }
 
     fn ensure_vec_table_from_embedder(&self) -> Result<()> {
-        let guard = self.embedder.lock().map_err(|e| {
-            AlexandriaError::Other(anyhow::anyhow!("embedder lock poisoned: {e}"))
-        })?;
+        let guard = self
+            .embedder
+            .lock()
+            .map_err(|e| AlexandriaError::Other(anyhow::anyhow!("embedder lock poisoned: {e}")))?;
         let embedder = guard.as_deref().ok_or_else(|| {
             AlexandriaError::Config("embedder required for vec table setup".into())
         })?;
@@ -374,8 +380,7 @@ impl Index {
         let current_id = embedder.id().to_string();
         let stored_dim = self.stored_embedding_dim()?;
 
-        let mismatch = stored_id.as_deref() != Some(current_id.as_str())
-            || stored_dim != Some(dim);
+        let mismatch = stored_id.as_deref() != Some(current_id.as_str()) || stored_dim != Some(dim);
 
         if mismatch {
             self.drop_vec_table()?;
@@ -580,9 +585,10 @@ impl Index {
         let rows = stmt.query_map(params![engram_id], |row| {
             let observed_s: Option<String> = row.get(2)?;
             let observed = match observed_s {
-                Some(s) => Some(parse_observed(&s).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                })?),
+                Some(s) => Some(
+                    parse_observed(&s)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+                ),
                 None => None,
             };
             Ok(crate::engram::Source {
@@ -623,15 +629,12 @@ impl Index {
     }
 
     pub fn reembed_all_engrams(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("SELECT rowid, claim, body, tier FROM engrams")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT rowid, claim, body, tier FROM engrams")?;
         let rows: Vec<(i64, String, String, String)> = stmt
             .query_map([], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                ))
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -738,20 +741,14 @@ impl Index {
     pub fn neighbors_within(&self, query_vec: &[f32], radius: f32) -> Result<u32> {
         let limit = 100u32;
         let hits = self.semantic_knn(query_vec, limit)?;
-        let count = hits
-            .iter()
-            .filter(|h| (h.distance as f32) < radius)
-            .count();
+        let count = hits.iter().filter(|h| (h.distance as f32) < radius).count();
         Ok(count as u32)
     }
 
-    pub fn nearest_collection_centroid(
-        &self,
-        query_vec: &[f32],
-    ) -> Result<Option<(String, f32)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT collection FROM collection_members ORDER BY collection",
-        )?;
+    pub fn nearest_collection_centroid(&self, query_vec: &[f32]) -> Result<Option<(String, f32)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT collection FROM collection_members ORDER BY collection")?;
         let collections: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -899,8 +896,7 @@ impl Index {
 
         if !tags.is_empty() {
             let placeholders = vec!["?"; tags.len()].join(",");
-            let sql =
-                format!("SELECT DISTINCT engram_id FROM tags WHERE tag IN ({placeholders})");
+            let sql = format!("SELECT DISTINCT engram_id FROM tags WHERE tag IN ({placeholders})");
             let mut stmt = self.conn.prepare(&sql)?;
             let rows = stmt.query_map(rusqlite::params_from_iter(tags.iter()), |r| {
                 r.get::<_, String>(0)
@@ -1028,11 +1024,11 @@ impl Index {
         let engram_sql = format!(
             "SELECT COUNT(DISTINCT engram_id) FROM sources WHERE engram_id IN ({placeholders})"
         );
-        stats.engrams_with_sources = self.conn.query_row(
-            &engram_sql,
-            rusqlite::params_from_iter(ids.iter()),
-            |row| row.get(0),
-        )?;
+        stats.engrams_with_sources =
+            self.conn
+                .query_row(&engram_sql, rusqlite::params_from_iter(ids.iter()), |row| {
+                    row.get(0)
+                })?;
         Ok(stats)
     }
 
@@ -1046,12 +1042,16 @@ impl Index {
             "SELECT MIN(updated), MAX(updated), MIN(last_touched), MAX(last_touched)
              FROM engrams WHERE id IN ({placeholders}) AND tier != 'relational'"
         );
-        let (min_u, max_u, min_t, max_t): (Option<String>, Option<String>, Option<String>, Option<String>) =
-            self.conn.query_row(
-                &sql,
-                rusqlite::params_from_iter(ids.iter()),
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )?;
+        let (min_u, max_u, min_t, max_t): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = self
+            .conn
+            .query_row(&sql, rusqlite::params_from_iter(ids.iter()), |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?;
         Ok(RecencyStats {
             oldest_updated: min_u,
             newest_updated: max_u,
@@ -1203,7 +1203,9 @@ impl Index {
     }
 
     pub fn engrams_matching_surface_trigger(&self, topic: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT DISTINCT engram_id, trigger FROM surface_triggers")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT engram_id, trigger FROM surface_triggers")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -1419,7 +1421,8 @@ impl Index {
             } else {
                 0.0
             };
-            let reliability = (1.0 - (corr as f64 * 0.1).min(0.5) - gap_penalty * 0.3).clamp(0.0, 1.0);
+            let reliability =
+                (1.0 - (corr as f64 * 0.1).min(0.5) - gap_penalty * 0.3).clamp(0.0, 1.0);
             self.conn.execute(
                 "INSERT INTO meta_reliability (domain, reliability, updated) VALUES (?1, ?2, ?3)",
                 params![domain, reliability, now],
@@ -1443,20 +1446,18 @@ impl Index {
                 }
             }
             None => {
-                let count: i64 = self.conn.query_row(
-                    "SELECT COUNT(*) FROM meta_reliability",
-                    [],
-                    |row| row.get(0),
-                )?;
+                let count: i64 =
+                    self.conn
+                        .query_row("SELECT COUNT(*) FROM meta_reliability", [], |row| {
+                            row.get(0)
+                        })?;
                 if count == 0 {
                     return Ok(1.0);
                 }
                 self.conn
-                    .query_row(
-                        "SELECT AVG(reliability) FROM meta_reliability",
-                        [],
-                        |row| row.get::<_, f64>(0),
-                    )
+                    .query_row("SELECT AVG(reliability) FROM meta_reliability", [], |row| {
+                        row.get::<_, f64>(0)
+                    })
                     .map_err(Into::into)
             }
         }
@@ -1502,16 +1503,17 @@ impl Index {
 
     pub fn promotion_reversal_rate(&self, domain: Option<&str>) -> Result<(f64, u32)> {
         let total: i64 = match domain {
-            Some(_) => self.conn.query_row(
-                "SELECT COUNT(*) FROM promotion_reversals",
-                [],
-                |row| row.get(0),
-            )?,
-            None => self.conn.query_row(
-                "SELECT COUNT(*) FROM promotion_reversals",
-                [],
-                |row| row.get(0),
-            )?,
+            Some(_) => {
+                self.conn
+                    .query_row("SELECT COUNT(*) FROM promotion_reversals", [], |row| {
+                        row.get(0)
+                    })?
+            }
+            None => self
+                .conn
+                .query_row("SELECT COUNT(*) FROM promotion_reversals", [], |row| {
+                    row.get(0)
+                })?,
         };
         let rate = if total > 0 {
             (total as f64 * 0.1).min(1.0)
@@ -1528,11 +1530,9 @@ impl Index {
                 params![d],
                 |row| row.get(0),
             )?,
-            None => self.conn.query_row(
-                "SELECT COUNT(*) FROM corrections",
-                [],
-                |row| row.get(0),
-            )?,
+            None => self
+                .conn
+                .query_row("SELECT COUNT(*) FROM corrections", [], |row| row.get(0))?,
         };
         Ok(count as u32)
     }
@@ -1628,8 +1628,6 @@ fn parse_rel(s: &str) -> Result<Rel> {
         "superseded_by" => Ok(Rel::SupersededBy),
         "aspect_of" => Ok(Rel::AspectOf),
         "same_episode" => Ok(Rel::SameEpisode),
-        _ => Err(AlexandriaError::InvalidEngram(format!(
-            "unknown rel: {s}"
-        ))),
+        _ => Err(AlexandriaError::InvalidEngram(format!("unknown rel: {s}"))),
     }
 }

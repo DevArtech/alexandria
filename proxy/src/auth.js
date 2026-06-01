@@ -5,8 +5,7 @@ import { createRemoteJWKSet, jwtVerify, errors as joseErrors } from "jose";
 async function resolveJwksUri(config) {
   if (config.jwksUri) return config.jwksUri;
 
-  const discoveryUrl =
-    config.issuer.replace(/\/+$/, "") + "/.well-known/openid-configuration";
+  const discoveryUrl = config.issuer.replace(/\/+$/, "") + "/.well-known/openid-configuration";
   const res = await fetch(discoveryUrl, {
     headers: { accept: "application/json" },
   });
@@ -25,6 +24,22 @@ async function resolveJwksUri(config) {
 
 // Build a token verifier. The returned function resolves to the verified
 // payload, or throws an AuthError with an OAuth-style reason on failure.
+// Asymmetric signature algorithms only. Never allow `none` (unsigned) or the
+// HS family with a JWKS public key — both enable algorithm-confusion attacks
+// where a public key is abused as an HMAC secret.
+const SAFE_ALGORITHMS = new Set([
+  "RS256",
+  "RS384",
+  "RS512",
+  "PS256",
+  "PS384",
+  "PS512",
+  "ES256",
+  "ES384",
+  "ES512",
+  "EdDSA",
+]);
+
 export async function createVerifier(config, logger) {
   const jwksUri = await resolveJwksUri(config);
   logger.info(`jwks: ${jwksUri}`);
@@ -35,8 +50,18 @@ export async function createVerifier(config, logger) {
     cooldownDuration: 30 * 1000,
   });
 
+  const requested = config.algorithms?.length ? config.algorithms : ["RS256"];
+  const algorithms = requested.filter((a) => SAFE_ALGORITHMS.has(a));
+  if (!algorithms.length) {
+    throw new Error(
+      `No safe JWT algorithms configured (requested: ${requested.join(", ") || "none"}). ` +
+        "Allowed: " +
+        [...SAFE_ALGORITHMS].join(", "),
+    );
+  }
+
   const verifyOptions = {
-    algorithms: config.algorithms,
+    algorithms,
     clockTolerance: config.clockToleranceSec,
   };
   if (config.issuer) verifyOptions.issuer = config.issuer;

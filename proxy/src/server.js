@@ -8,6 +8,7 @@ import { createLogger } from "./logger.js";
 import { AuthError } from "./auth.js";
 import { createStore } from "./store.js";
 import { createOAuthServer } from "./oauth.js";
+import { createRateLimiter, clientIp } from "./ratelimit.js";
 
 async function main() {
   const config = loadConfig();
@@ -15,11 +16,20 @@ async function main() {
   const store = await createStore(config.dataDir);
   const oauth = createOAuthServer(config, store, log);
 
+  const loginLimiter = createRateLimiter({
+    windowMs: config.rateLimitWindowMs,
+    max: config.loginRateLimitMax,
+  });
+  const registerLimiter = createRateLimiter({
+    windowMs: config.rateLimitWindowMs,
+    max: config.registerRateLimitMax,
+  });
+
   const proxy = httpProxy.createProxyServer({
     target: config.upstreamUrl,
     changeOrigin: true,
     xfwd: true,
-    proxyTimeout: 0,
+    proxyTimeout: config.proxyTimeoutMs,
   });
 
   proxy.on("error", (err, req, res) => {
@@ -41,14 +51,16 @@ async function main() {
   });
 
   const server = http.createServer((req, res) => {
-    handle(req, res, { config, log, oauth, proxy }).catch((err) => {
+    handle(req, res, { config, log, oauth, proxy, loginLimiter, registerLimiter }).catch((err) => {
       log.error("unhandled request error", { message: err?.message });
       sendError(res, 500, "internal_error", "internal error");
     });
   });
 
-  server.requestTimeout = 0;
-  server.headersTimeout = 0;
+  // Slowloris protection: bound how long a client may take to send headers and
+  // the full request. 0 disables (not recommended on the public internet).
+  server.headersTimeout = config.headersTimeoutMs;
+  server.requestTimeout = config.requestTimeoutMs;
 
   server.listen(config.port, config.host, () => {
     log.info(`alexandria-oauth-proxy listening on http://${config.host}:${config.port}`);
@@ -68,7 +80,7 @@ async function main() {
 }
 
 async function handle(req, res, ctx) {
-  const { config, log, oauth, proxy } = ctx;
+  const { config, log, oauth, proxy, loginLimiter, registerLimiter } = ctx;
   const url = new URL(req.url, config.resourceUrl || `http://${req.headers.host}`);
   const path = url.pathname;
   const protectedMetaPrefix = "/.well-known/oauth-protected-resource";
@@ -77,6 +89,18 @@ async function handle(req, res, ctx) {
 
   if (path === "/health" || path === "/healthz") {
     return sendJson(res, 200, { status: "ok" });
+  }
+
+  // Throttle the unauthenticated, abuse-prone endpoints before doing any work
+  // (including body parsing) on them.
+  if (req.method === "POST" && (path === "/login" || path === "/oauth/register")) {
+    const limiter = path === "/login" ? loginLimiter : registerLimiter;
+    const { allowed, retryAfterSec } = limiter.check(clientIp(req, config.trustProxy));
+    if (!allowed) {
+      log.warn("rate limited", { path, ip: clientIp(req, config.trustProxy) });
+      res.setHeader("Retry-After", String(retryAfterSec));
+      return sendError(res, 429, "too_many_requests", "rate limit exceeded, slow down");
+    }
   }
 
   if (path === protectedMetaPrefix || path.startsWith(`${protectedMetaPrefix}/`)) {
@@ -97,6 +121,10 @@ async function handle(req, res, ctx) {
   if (path === "/mcp" || path.startsWith("/oauth")) {
     log.info("request", { method: req.method, path, ua: req.headers["user-agent"]?.slice(0, 80) });
   }
+
+  // Never let a client smuggle identity. We are the sole authority for these
+  // headers; strip any inbound copies before authenticating and forwarding.
+  stripInboundAuthHeaders(req);
 
   const token = bearerToken(req);
   if (!token) {
@@ -127,6 +155,14 @@ async function handle(req, res, ctx) {
   proxy.web(req, res);
 }
 
+function stripInboundAuthHeaders(req) {
+  for (const name of Object.keys(req.headers)) {
+    if (name.toLowerCase().startsWith("x-auth-")) {
+      delete req.headers[name];
+    }
+  }
+}
+
 function bearerToken(req) {
   const h = req.headers["authorization"];
   if (!h) return null;
@@ -150,9 +186,7 @@ function sendAuthChallenge(res, config, authError, requestPath = "") {
         ? requestPath
         : config.mcpPath || "/mcp";
     const metaUrl =
-      config.resourceUrl.replace(/\/+$/, "") +
-      "/.well-known/oauth-protected-resource" +
-      pathSuffix;
+      config.resourceUrl.replace(/\/+$/, "") + "/.well-known/oauth-protected-resource" + pathSuffix;
     params.push(`resource_metadata="${metaUrl}"`);
   }
   if (authError) {

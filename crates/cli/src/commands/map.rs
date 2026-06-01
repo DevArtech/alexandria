@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use alexandria_core::{map, Config, Index, Library, MapOptions, Rel};
 use anyhow::Result;
 
-use crate::OutputFormat;
 use crate::commands::util::parse_rel_cli;
+use crate::OutputFormat;
 
 pub fn run(
     library_path: Option<PathBuf>,
@@ -57,16 +57,16 @@ fn print_human(result: &alexandria_core::MapResult) {
 
     for group in &result.rel_groups {
         println!();
-        println!("## {} ({} edges, ~{} tokens)", group.rel, group.edges.len(), group.token_cost);
+        println!(
+            "## {} ({} edges, ~{} tokens)",
+            group.rel,
+            group.edges.len(),
+            group.token_cost
+        );
         for edge in &group.edges {
             println!(
                 "  [{}] {} --{}--> [{}] {} (depth {})",
-                edge.from_id,
-                edge.from_claim,
-                edge.rel,
-                edge.to_id,
-                edge.to_claim,
-                edge.depth
+                edge.from_id, edge.from_claim, edge.rel, edge.to_id, edge.to_claim, edge.depth
             );
         }
     }

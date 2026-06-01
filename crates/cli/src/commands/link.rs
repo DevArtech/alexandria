@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use alexandria_core::{Config, Index, Library, Ops};
 use anyhow::Result;
 
-use crate::OutputFormat;
 use crate::commands::util::parse_rel_cli;
+use crate::OutputFormat;
 
 pub fn run(
     library_path: Option<PathBuf>,
@@ -22,7 +22,10 @@ pub fn run(
 
     match format {
         OutputFormat::Human => {
-            println!("Linked {} --{}--> {}", result.from_id, result.rel, result.to_id);
+            println!(
+                "Linked {} --{}--> {}",
+                result.from_id, result.rel, result.to_id
+            );
             if result.reciprocal_added {
                 println!("  reciprocal edge added");
             }

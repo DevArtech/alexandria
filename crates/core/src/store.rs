@@ -180,10 +180,7 @@ impl Library {
             if path.extension().and_then(|s| s.to_str()) != Some("md") {
                 continue;
             }
-            if path
-                .components()
-                .any(|c| c.as_os_str() == ALEXANDRIA_DIR)
-            {
+            if path.components().any(|c| c.as_os_str() == ALEXANDRIA_DIR) {
                 continue;
             }
             match self.read_engram(path) {
@@ -283,11 +280,7 @@ mod tests {
     fn scan_reports_parse_failures() {
         let dir = tempfile::TempDir::new().unwrap();
         let lib = Library::init(dir.path()).unwrap();
-        fs::write(
-            lib.root.join("semantic/bad.md"),
-            "not valid frontmatter\n",
-        )
-        .unwrap();
+        fs::write(lib.root.join("semantic/bad.md"), "not valid frontmatter\n").unwrap();
 
         let scan = lib.scan_engrams();
         assert_eq!(scan.engrams.len(), 0);

@@ -1,15 +1,13 @@
 use std::path::PathBuf;
 
-use alexandria_core::{build_completer, Config, Index, Library, consolidate_fast, consolidate_slow};
+use alexandria_core::{
+    build_completer, consolidate_fast, consolidate_slow, Config, Index, Library,
+};
 use anyhow::Result;
 
 use crate::OutputFormat;
 
-pub fn run(
-    library_path: Option<PathBuf>,
-    format: OutputFormat,
-    fast: bool,
-) -> Result<()> {
+pub fn run(library_path: Option<PathBuf>, format: OutputFormat, fast: bool) -> Result<()> {
     let library = match library_path {
         Some(p) => Library::discover(Some(&p))?,
         None => Library::discover(None)?,

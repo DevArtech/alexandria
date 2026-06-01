@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use alexandria_core::{Config, Index, Library, Retrieval};
 use anyhow::Result;
 
-use crate::OutputFormat;
 use crate::commands::util::parse_rel_cli;
+use crate::OutputFormat;
 
 pub fn run(
     library_path: Option<PathBuf>,
@@ -20,10 +20,7 @@ pub fn run(
     let index = Index::open_readonly(&library)?;
     let retrieval = Retrieval::new(&index, &config);
 
-    let rel_filter = rel
-        .as_deref()
-        .map(parse_rel_cli)
-        .transpose()?;
+    let rel_filter = rel.as_deref().map(parse_rel_cli).transpose()?;
 
     let result = retrieval.expand(&id, rel_filter)?;
 

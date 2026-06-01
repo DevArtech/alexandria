@@ -137,11 +137,7 @@ fn dedupe_merge(
             }
 
             let (survivor_local, _loser_local) = pick_survivor(&active[i], &active[j]);
-            let (survivor_idx, loser_idx) = if survivor_local == 0 {
-                (i, j)
-            } else {
-                (j, i)
-            };
+            let (survivor_idx, loser_idx) = if survivor_local == 0 { (i, j) } else { (j, i) };
             let survivor = active[survivor_idx].clone();
             let mut loser = active[loser_idx].clone();
 
@@ -149,7 +145,11 @@ fn dedupe_merge(
             merge_metadata(&mut merged, &loser);
             merged.updated = Utc::now();
 
-            if !merged.links.iter().any(|l| l.rel == Rel::Supersedes && l.to == loser.id) {
+            if !merged
+                .links
+                .iter()
+                .any(|l| l.rel == Rel::Supersedes && l.to == loser.id)
+            {
                 merged.links.push(Link {
                     rel: Rel::Supersedes,
                     to: loser.id.clone(),
@@ -158,7 +158,11 @@ fn dedupe_merge(
 
             loser.status = Status::Superseded;
             loser.updated = Utc::now();
-            if !loser.links.iter().any(|l| l.rel == Rel::SupersededBy && l.to == merged.id) {
+            if !loser
+                .links
+                .iter()
+                .any(|l| l.rel == Rel::SupersededBy && l.to == merged.id)
+            {
                 loser.links.push(Link {
                     rel: Rel::SupersededBy,
                     to: merged.id.clone(),
@@ -170,7 +174,9 @@ fn dedupe_merge(
 
             merged_ids.insert(loser.id.clone());
             active[survivor_idx] = merged;
-            report.merged.push(format!("{} -> {}", loser.id, active[survivor_idx].id));
+            report
+                .merged
+                .push(format!("{} -> {}", loser.id, active[survivor_idx].id));
         }
     }
 
@@ -199,10 +205,7 @@ fn apply_promotion_ladder(
 
         let mut changed = false;
 
-        if conflict
-            && engram.status != Status::Provisional
-            && engram.tier != Tier::Relational
-        {
+        if conflict && engram.status != Status::Provisional && engram.tier != Tier::Relational {
             engram.status = Status::Provisional;
             if engram.tier == Tier::Semantic {
                 engram.tier = Tier::Provisional;
@@ -225,7 +228,9 @@ fn apply_promotion_ladder(
             engram.status = Status::Provisional;
             engram.updated = Utc::now();
             changed = true;
-            report.promoted.push(format!("{}: episodic->provisional", engram.id));
+            report
+                .promoted
+                .push(format!("{}: episodic->provisional", engram.id));
         } else if engram.tier == Tier::Provisional
             && supports >= cfg.promote_provisional_to_semantic
         {
@@ -233,7 +238,9 @@ fn apply_promotion_ladder(
             engram.status = Status::Confirmed;
             engram.updated = Utc::now();
             changed = true;
-            report.promoted.push(format!("{}: provisional->semantic", engram.id));
+            report
+                .promoted
+                .push(format!("{}: provisional->semantic", engram.id));
         }
 
         if changed {
@@ -323,7 +330,9 @@ fn consolidate_relational(
             engram.status = Status::Confirmed;
             engram.updated = Utc::now();
             persist_engram(library, index, &engram)?;
-            report.promoted.push(format!("{}: relational->confirmed", engram.id));
+            report
+                .promoted
+                .push(format!("{}: relational->confirmed", engram.id));
         }
     }
     Ok(())
@@ -347,8 +356,9 @@ fn parse_relational_evidence(engram: &Engram) -> RelationalEvidence {
                 let part = part.trim();
                 if let Some(n) = part.strip_prefix("projects=").and_then(|s| s.parse().ok()) {
                     ev.projects = ev.projects.max(n);
-                } else if let Some(n) =
-                    part.strip_prefix("task_types=").and_then(|s| s.parse().ok())
+                } else if let Some(n) = part
+                    .strip_prefix("task_types=")
+                    .and_then(|s| s.parse().ok())
                 {
                     ev.task_types = ev.task_types.max(n);
                 } else if let Some(n) = part.strip_prefix("registers=").and_then(|s| s.parse().ok())
@@ -407,7 +417,10 @@ fn resummarize_collections(library: &Library, report: &mut ConsolidationReport) 
             continue;
         }
         for collection in &engram.collections {
-            by_collection.entry(collection.clone()).or_default().push(engram);
+            by_collection
+                .entry(collection.clone())
+                .or_default()
+                .push(engram);
         }
     }
 
@@ -415,7 +428,10 @@ fn resummarize_collections(library: &Library, report: &mut ConsolidationReport) 
     std::fs::create_dir_all(&collections_dir)?;
 
     for (name, members) in by_collection {
-        let mut claims: Vec<String> = members.iter().map(|e| format!("- [{}] {}", e.id, e.claim)).collect();
+        let mut claims: Vec<String> = members
+            .iter()
+            .map(|e| format!("- [{}] {}", e.id, e.claim))
+            .collect();
         claims.sort();
         let summary = format!(
             "Collection `{}` — {} engram(s)\n\n{}",
@@ -453,14 +469,8 @@ fn embed_text(engram: &Engram) -> String {
 }
 
 fn claim_overlap(a: &str, b: &str) -> f64 {
-    let ta: HashSet<_> = a
-        .split_whitespace()
-        .map(|s| s.to_lowercase())
-        .collect();
-    let tb: HashSet<_> = b
-        .split_whitespace()
-        .map(|s| s.to_lowercase())
-        .collect();
+    let ta: HashSet<_> = a.split_whitespace().map(|s| s.to_lowercase()).collect();
+    let tb: HashSet<_> = b.split_whitespace().map(|s| s.to_lowercase()).collect();
     if ta.is_empty() || tb.is_empty() {
         return 0.0;
     }
@@ -597,11 +607,22 @@ mod tests {
         remember(&lib, &index, &supporter2);
 
         let report = consolidate_slow(&lib, &index, &config, None).unwrap();
-        assert!(report.promoted.iter().any(|p| p.contains("episodic->provisional")));
+        assert!(report
+            .promoted
+            .iter()
+            .any(|p| p.contains("episodic->provisional")));
 
         let report2 = consolidate_slow(&lib, &index, &config, None).unwrap();
-        assert!(report2.promoted.iter().any(|p| p.contains("provisional->semantic"))
-            || report.promoted.iter().any(|p| p.contains("provisional->semantic")));
+        assert!(
+            report2
+                .promoted
+                .iter()
+                .any(|p| p.contains("provisional->semantic"))
+                || report
+                    .promoted
+                    .iter()
+                    .any(|p| p.contains("provisional->semantic"))
+        );
     }
 
     #[test]
@@ -622,12 +643,7 @@ mod tests {
     #[test]
     fn consolidate_is_idempotent() {
         let (_dir, lib, index, config) = setup();
-        let mut e = Engram::new(
-            "stable fact",
-            "body",
-            Tier::Semantic,
-            Status::Confirmed,
-        );
+        let mut e = Engram::new("stable fact", "body", Tier::Semantic, Status::Confirmed);
         e.collections.push("demo".into());
         remember(&lib, &index, &e);
 
@@ -646,7 +662,9 @@ mod tests {
         remember(&lib, &index, &e);
 
         let report = consolidate_slow(&lib, &index, &config, None).unwrap();
-        assert!(report.collections_resummarized.contains(&"demo/project".to_string()));
+        assert!(report
+            .collections_resummarized
+            .contains(&"demo/project".to_string()));
         assert!(lib.root.join("collections/demo-project.md").exists());
     }
 }

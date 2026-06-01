@@ -15,9 +15,20 @@ RUN apt-get update \
 
 COPY --from=builder /build/target/release/alexandria-mcp /usr/local/bin/alexandria-mcp
 
+# Run as an unprivileged user instead of root.
+# NOTE: when mounting a host library via bind mount, ensure the directory is
+# writable by uid 10001 (the server writes/refreshes the index under it), or use
+# a named volume which Docker initializes with this ownership.
+RUN useradd --system --uid 10001 --user-group --home-dir /srv/alexandria \
+        --shell /usr/sbin/nologin alexandria \
+    && mkdir -p /srv/alexandria \
+    && chown -R alexandria:alexandria /srv/alexandria
+
 # The memory library is a mounted volume; the index is rebuildable from it.
 VOLUME ["/srv/alexandria"]
 EXPOSE 8080
+
+USER alexandria
 
 # Token is read from ALEXANDRIA_MCP_TOKEN at runtime (see docker-compose.yml).
 ENTRYPOINT ["alexandria-mcp"]

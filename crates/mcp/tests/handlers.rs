@@ -56,7 +56,10 @@ fn remember_recall_round_trip() {
         },
     )
     .unwrap();
-    let state_str = recalled.get("state").and_then(|v| v.as_str()).unwrap_or("nothing");
+    let state_str = recalled
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("nothing");
     assert_ne!(state_str, "nothing");
 }
 
@@ -122,9 +125,11 @@ fn style_returns_profile_without_bodies() {
     let profile = style(&state).unwrap();
     assert!(profile.get("verbosity").is_some());
     assert!(profile.get("directness").is_some());
-    assert!(profile.as_object().unwrap().values().all(|v| {
-        !v.as_str().is_some_and(|s| s.contains("Never quote"))
-    }));
+    assert!(profile
+        .as_object()
+        .unwrap()
+        .values()
+        .all(|v| { !v.as_str().is_some_and(|s| s.contains("Never quote")) }));
 }
 
 #[test]

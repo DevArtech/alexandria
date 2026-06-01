@@ -165,11 +165,10 @@ pub fn parse_codex_jsonl<R: BufRead>(reader: R) -> Result<ParsedCodexRun> {
     }
 
     if run.failed && run.final_message.is_none() {
-        bail!(
-            run.error_message
-                .clone()
-                .unwrap_or_else(|| "codex turn failed".to_string())
-        );
+        bail!(run
+            .error_message
+            .clone()
+            .unwrap_or_else(|| "codex turn failed".to_string()));
     }
 
     Ok(run)
@@ -239,7 +238,10 @@ pub fn resolve_mcp_binary() -> Result<std::path::PathBuf> {
         if path.is_file() {
             return Ok(path);
         }
-        bail!("ALEXANDRIA_MCP points to a missing file: {}", path.display());
+        bail!(
+            "ALEXANDRIA_MCP points to a missing file: {}",
+            path.display()
+        );
     }
 
     if let Ok(current) = std::env::current_exe() {

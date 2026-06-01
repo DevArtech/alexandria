@@ -24,7 +24,10 @@ pub struct RelationalEvidenceSummary {
 }
 
 /// Assemble style profile from relational engrams (salience-weighted heuristic).
-pub fn style_profile(library: &Library, _completer: Option<&dyn Completer>) -> Result<StyleProfile> {
+pub fn style_profile(
+    library: &Library,
+    _completer: Option<&dyn Completer>,
+) -> Result<StyleProfile> {
     let scan = library.scan_engrams();
     let relational: Vec<&Engram> = scan
         .engrams
@@ -153,7 +156,10 @@ fn parse_evidence_tag(tag: &str) -> Option<RelationalEvidenceSummary> {
             let part = part.trim();
             if let Some(n) = part.strip_prefix("projects=").and_then(|s| s.parse().ok()) {
                 ev.projects = n;
-            } else if let Some(n) = part.strip_prefix("task_types=").and_then(|s| s.parse().ok()) {
+            } else if let Some(n) = part
+                .strip_prefix("task_types=")
+                .and_then(|s| s.parse().ok())
+            {
                 ev.task_types = n;
             } else if let Some(n) = part.strip_prefix("registers=").and_then(|s| s.parse().ok()) {
                 ev.registers = n;

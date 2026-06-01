@@ -18,10 +18,7 @@ pub fn run(
     };
     let index = Index::open_readonly(&library)?;
     let graph = Graph::new(&index);
-    let tier = tier
-        .as_deref()
-        .map(Tier::parse)
-        .transpose()?;
+    let tier = tier.as_deref().map(Tier::parse).transpose()?;
     let result = graph.timeline(since.as_deref(), until.as_deref(), tier)?;
 
     match format {

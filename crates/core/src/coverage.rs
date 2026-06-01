@@ -173,25 +173,16 @@ mod tests {
 
     #[test]
     fn recommend_nothing_when_empty_and_sparse() {
-        assert_eq!(
-            recommend_next(0, false, 0, 3),
-            RecommendedNext::Nothing
-        );
+        assert_eq!(recommend_next(0, false, 0, 3), RecommendedNext::Nothing);
     }
 
     #[test]
     fn recommend_survey_when_many_engrams() {
-        assert_eq!(
-            recommend_next(5, false, 10, 3),
-            RecommendedNext::Survey
-        );
+        assert_eq!(recommend_next(5, false, 10, 3), RecommendedNext::Survey);
     }
 
     #[test]
     fn recommend_expand_when_sparse_and_few() {
-        assert_eq!(
-            recommend_next(2, true, 10, 3),
-            RecommendedNext::Expand
-        );
+        assert_eq!(recommend_next(2, true, 10, 3), RecommendedNext::Expand);
     }
 }

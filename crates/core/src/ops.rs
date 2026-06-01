@@ -55,7 +55,11 @@ impl<'a> Ops<'a> {
         let mut target_superseded = false;
 
         if let Some(reciprocal) = rel.reciprocal() {
-            if !to.links.iter().any(|l| l.rel == reciprocal && l.to == from_id) {
+            if !to
+                .links
+                .iter()
+                .any(|l| l.rel == reciprocal && l.to == from_id)
+            {
                 to.links.push(Link {
                     rel: reciprocal,
                     to: from_id.to_string(),
@@ -76,17 +80,14 @@ impl<'a> Ops<'a> {
         let from_old = self.index.file_path(from_id)?;
         let to_old = self.index.file_path(to_id)?;
 
-        let from_path = self.library.save_relocating(
-            &from,
-            from_old.as_deref().map(Path::new),
-        )?;
-        let to_path = self.library.save_relocating(
-            &to,
-            to_old.as_deref().map(Path::new),
-        )?;
+        let from_path = self
+            .library
+            .save_relocating(&from, from_old.as_deref().map(Path::new))?;
+        let to_path = self
+            .library
+            .save_relocating(&to, to_old.as_deref().map(Path::new))?;
 
-        self.index
-            .upsert(&from, &from_path.display().to_string())?;
+        self.index.upsert(&from, &from_path.display().to_string())?;
         self.index.upsert(&to, &to_path.display().to_string())?;
 
         Ok(LinkResult {
@@ -114,8 +115,7 @@ impl<'a> Ops<'a> {
         let path = self
             .library
             .save_relocating(&engram, old_path.as_deref().map(Path::new))?;
-        self.index
-            .upsert(&engram, &path.display().to_string())?;
+        self.index.upsert(&engram, &path.display().to_string())?;
         Ok(ArchiveResult {
             id: engram.id,
             claim: engram.claim,
@@ -174,9 +174,7 @@ mod tests {
         remember(&lib, &index, &b);
 
         let ops = Ops::new(&lib, &index);
-        let result = ops
-            .link(&a.id, Rel::ConflictsConfirmed, &b.id)
-            .unwrap();
+        let result = ops.link(&a.id, Rel::ConflictsConfirmed, &b.id).unwrap();
         assert!(result.reciprocal_added);
 
         let updated_b = ops.load_engram(&b.id).unwrap();
@@ -201,7 +199,10 @@ mod tests {
 
         let updated = ops.load_engram(&old.id).unwrap();
         assert_eq!(updated.status, Status::Superseded);
-        assert!(lib.engram_path(&updated).unwrap().starts_with(lib.root.join("archive")));
+        assert!(lib
+            .engram_path(&updated)
+            .unwrap()
+            .starts_with(lib.root.join("archive")));
         assert!(!old_path.exists());
     }
 

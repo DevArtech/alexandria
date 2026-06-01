@@ -58,7 +58,9 @@ impl Status {
             "unresolved_by_design" => Ok(Status::UnresolvedByDesign),
             "superseded" => Ok(Status::Superseded),
             "archived" => Ok(Status::Archived),
-            _ => Err(AlexandriaError::InvalidEngram(format!("unknown status: {s}"))),
+            _ => Err(AlexandriaError::InvalidEngram(format!(
+                "unknown status: {s}"
+            ))),
         }
     }
 }
@@ -119,10 +121,7 @@ impl Rel {
     pub fn is_symmetric(self) -> bool {
         matches!(
             self,
-            Rel::ConflictsConfirmed
-                | Rel::Coexists
-                | Rel::TensionPossible
-                | Rel::ContextQualified
+            Rel::ConflictsConfirmed | Rel::Coexists | Rel::TensionPossible | Rel::ContextQualified
         )
     }
 
@@ -176,10 +175,7 @@ impl Source {
     }
 
     /// Apply explicit `--observed` or default now for first-party source kinds.
-    pub fn resolve_observed(
-        &mut self,
-        explicit: Option<&str>,
-    ) -> Result<()> {
+    pub fn resolve_observed(&mut self, explicit: Option<&str>) -> Result<()> {
         self.observed = if let Some(s) = explicit {
             Some(parse_observed_str(s)?)
         } else if self.kind == "observation" || self.kind == "document" || self.kind == "repo" {
@@ -436,7 +432,12 @@ mod tests {
 
     #[test]
     fn relational_gets_output_policy() {
-        let engram = Engram::new("prefers terse answers", "", Tier::Relational, Status::Confirmed);
+        let engram = Engram::new(
+            "prefers terse answers",
+            "",
+            Tier::Relational,
+            Status::Confirmed,
+        );
         assert_eq!(engram.output_policy.as_deref(), Some("generation_only"));
     }
 }

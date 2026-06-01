@@ -14,10 +14,22 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "for f in src/*.js scripts/*.mjs; do node --check \"$f\" || exit 1; done",
+    "check": "npm run format:check && npm run lint && npm run typecheck"
   },
   "dependencies": {
     "http-proxy": "^1.18.1",
     "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2"
   }
 }

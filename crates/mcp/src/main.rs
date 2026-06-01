@@ -45,10 +45,14 @@ struct Args {
     bind: String,
 
     /// Env var holding the bearer token required on HTTP requests.
-    /// If the variable is unset/empty, the HTTP server runs UNAUTHENTICATED
-    /// (only do this behind a trusted reverse proxy).
     #[arg(long, default_value = "ALEXANDRIA_MCP_TOKEN")]
     auth_token_env: String,
+
+    /// Explicitly allow serving HTTP with NO authentication when the token env
+    /// var is unset/empty. Without this flag, an unset token is a hard error so
+    /// the server can never silently come up open to the network.
+    #[arg(long, default_value_t = false)]
+    allow_unauthenticated: bool,
 }
 
 fn main() -> Result<()> {
@@ -84,8 +88,7 @@ async fn run_http(server: AlexandriaMcpServer, args: Args) -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -113,9 +116,17 @@ async fn run_http(server: AlexandriaMcpServer, args: Args) -> Result<()> {
             ));
             tracing::info!("bearer auth enabled (token from ${})", args.auth_token_env);
         }
-        None => {
+        None if args.allow_unauthenticated => {
             tracing::warn!(
-                "${} is unset — HTTP server is UNAUTHENTICATED; put it behind a trusted proxy",
+                "${} is unset and --allow-unauthenticated set — HTTP server is UNAUTHENTICATED; \
+                 put it behind a trusted proxy",
+                args.auth_token_env
+            );
+        }
+        None => {
+            anyhow::bail!(
+                "${} is unset/empty: refusing to serve HTTP unauthenticated. Set the token, \
+                 or pass --allow-unauthenticated if this is intentional (e.g. behind a trusted proxy).",
                 args.auth_token_env
             );
         }

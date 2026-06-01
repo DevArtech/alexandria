@@ -20,8 +20,12 @@ bearer, if enabled) into a trusted internal request.
 
 - **Self-hosted authorization server**: RFC 7591 DCR, authorization code + PKCE (S256),
   local RS256 JWT access tokens, JWKS at `/.well-known/jwks.json`.
-- **Browser login**: simple username/password form at `/login` (credentials from env).
-- **Dual auth mode** (optional): accept legacy static bearer alongside OAuth JWTs.
+- **Browser login**: simple username/password form at `/login` (credentials from env), with a
+  double-submit CSRF token and `/logout` for explicit session revocation.
+- **Abuse hardening**: per-IP rate limiting on `/login` and `/oauth/register`, request
+  header/body timeouts, a capped request-body size, and stripping of inbound `x-auth-*` headers.
+- **Dual auth mode** (optional): accept legacy static bearer alongside OAuth JWTs (token must
+  be distinct from the upstream `ALEXANDRIA_MCP_TOKEN`).
 - **Rewrites auth**: strips the client token and injects the upstream static bearer.
 - **Streams**: long-lived Streamable-HTTP / SSE responses pass straight through.
 - **Discovery**: RFC 9728 protected resource metadata + RFC 8414 authorization server metadata.
@@ -31,23 +35,33 @@ bearer, if enabled) into a trusted internal request.
 
 All configuration is via environment variables (see [`.env.example`](./.env.example)).
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `RESOURCE_URL` | yes | – | Public HTTPS URL of this proxy (issuer + resource metadata). |
-| `LOGIN_PASSWORD` | yes | – | Password for the browser login form. |
-| `OAUTH_MODE` | no | `self` | `self` = built-in authorization server. |
-| `OAUTH_ISSUER` | no | `RESOURCE_URL` | Token `iss` claim and metadata issuer. |
-| `OAUTH_AUDIENCE` | no | `RESOURCE_URL` | Expected token audience. |
-| `LOGIN_USERNAME` | no | `admin` | Login form username. |
-| `DATA_DIR` | no | `/data` | Persist signing keys + DCR clients. |
-| `OAUTH_SCOPES` | no | `alexandria:read alexandria:write` | Advertised scopes. |
-| `OAUTH_REQUIRED_SCOPES` | no | – | Scopes every request must carry. |
-| `ALLOW_LEGACY_STATIC_TOKEN` | no | `false` | Also accept legacy static bearer. |
-| `LEGACY_BEARER_TOKEN` | no | `ALEXANDRIA_MCP_TOKEN` | Legacy client token. |
-| `UPSTREAM_URL` | no | `http://127.0.0.1:8080` | `alexandria-mcp` base URL. |
-| `ALEXANDRIA_MCP_TOKEN` | recommended | – | Static bearer injected upstream. |
-| `PORT` / `HOST` | no | `8081` / `0.0.0.0` | Listener. |
-| `LOG_LEVEL` | no | `info` | `error`/`warn`/`info`/`debug`. |
+| Variable                    | Required     | Default                            | Description                                                                                               |
+| --------------------------- | ------------ | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `RESOURCE_URL`              | yes          | –                                  | Public HTTPS URL of this proxy (issuer + resource metadata).                                              |
+| `LOGIN_PASSWORD`            | yes          | –                                  | Password for the browser login form.                                                                      |
+| `OAUTH_MODE`                | no           | `self`                             | `self` = built-in authorization server.                                                                   |
+| `OAUTH_ISSUER`              | no           | `RESOURCE_URL`                     | Token `iss` claim and metadata issuer.                                                                    |
+| `OAUTH_AUDIENCE`            | no           | `RESOURCE_URL`                     | Expected token audience.                                                                                  |
+| `LOGIN_USERNAME`            | no           | `admin`                            | Login form username.                                                                                      |
+| `DATA_DIR`                  | no           | `/data`                            | Persist signing keys + DCR clients.                                                                       |
+| `OAUTH_SCOPES`              | no           | `alexandria:read alexandria:write` | Advertised scopes.                                                                                        |
+| `OAUTH_REQUIRED_SCOPES`     | no           | –                                  | Scopes every request must carry.                                                                          |
+| `ALLOW_LEGACY_STATIC_TOKEN` | no           | `false`                            | Also accept legacy static bearer.                                                                         |
+| `LEGACY_BEARER_TOKEN`       | if legacy on | –                                  | Legacy client token. **Required** when legacy mode is on and **must differ** from `ALEXANDRIA_MCP_TOKEN`. |
+| `UPSTREAM_URL`              | no           | `http://127.0.0.1:8080`            | `alexandria-mcp` base URL.                                                                                |
+| `ALEXANDRIA_MCP_TOKEN`      | recommended  | –                                  | Static bearer injected upstream.                                                                          |
+| `TRUST_PROXY`               | no           | `false`                            | Trust `X-Forwarded-For` for client IP (enable only behind a trusted TLS terminator).                      |
+| `MAX_BODY_BYTES`            | no           | `65536`                            | Max request body on OAuth/login endpoints; `0` disables.                                                  |
+| `HEADERS_TIMEOUT_MS`        | no           | `60000`                            | Max time to receive request headers (Slowloris guard); `0` disables.                                      |
+| `REQUEST_TIMEOUT_MS`        | no           | `120000`                           | Max time to receive the full request; `0` disables.                                                       |
+| `PROXY_TIMEOUT_MS`          | no           | `0`                                | Upstream socket timeout. `0` keeps long-lived SSE alive; set finite if upstream can hang.                 |
+| `RATE_LIMIT_WINDOW_MS`      | no           | `900000`                           | Window for per-IP rate limiting (15 min).                                                                 |
+| `LOGIN_RATE_LIMIT_MAX`      | no           | `10`                               | Max `POST /login` attempts per IP per window.                                                             |
+| `REGISTER_RATE_LIMIT_MAX`   | no           | `20`                               | Max `POST /oauth/register` per IP per window.                                                             |
+| `ALLOW_LOCALHOST_REDIRECTS` | no           | `false`                            | Allow loopback (`localhost`/`127.0.0.1`/`::1`) redirect URIs for dev clients.                             |
+| `CSRF_COOKIE_NAME`          | no           | `alexandria_csrf`                  | Cookie name for the login form CSRF token.                                                                |
+| `PORT` / `HOST`             | no           | `8081` / `0.0.0.0`                 | Listener.                                                                                                 |
+| `LOG_LEVEL`                 | no           | `info`                             | `error`/`warn`/`info`/`debug`.                                                                            |
 
 ## Run it
 

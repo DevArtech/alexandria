@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# Alexandria pre-commit gate.
+#
+# Auto-fixes what can be fixed (rustfmt, clippy --fix, prettier, eslint --fix),
+# re-stages the touched files, then verifies formatting + lint/typecheck + tests.
+# The commit is blocked unless every front passes. Rust and proxy checks only
+# run when files in those areas are actually staged.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# (or run: ./scripts/setup-hooks.sh)
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Snapshot of paths staged for this commit (added/copied/modified/renamed).
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+[ -z "$staged_files" ] && exit 0
+
+rust_changed="$(printf '%s\n' "$staged_files" | grep -E '\.rs$|(^|/)Cargo\.(toml|lock)$' || true)"
+proxy_changed="$(printf '%s\n' "$staged_files" | grep -E '^proxy/' || true)"
+
+fail() {
+  echo "✖ pre-commit blocked: $1" >&2
+  exit 1
+}
+
+# Re-stage only paths that were already staged, so auto-fixes are committed but
+# unrelated working-tree changes are not pulled in.
+restage() {
+  printf '%s\n' "$staged_files" | while IFS= read -r f; do
+    [ -n "$f" ] && [ -e "$f" ] && git add -- "$f"
+  done
+}
+
+if [ -n "$rust_changed" ]; then
+  echo "→ Rust: auto-fixing (rustfmt + clippy --fix)"
+  cargo fmt --all
+  cargo clippy --fix --all-targets --all-features --allow-staged --allow-dirty \
+    -- -D warnings >/dev/null 2>&1 || true
+  restage
+
+  echo "→ Rust: verifying (fmt · clippy · test)"
+  cargo fmt --all -- --check || fail "rustfmt found unformatted Rust code"
+  cargo clippy --all-targets --all-features -- -D warnings || fail "clippy reported lints"
+  cargo test --workspace || fail "Rust tests failed"
+fi
+
+if [ -n "$proxy_changed" ]; then
+  echo "→ Proxy: auto-fixing (prettier + eslint --fix)"
+  (
+    cd proxy
+    [ -d node_modules ] || npm ci
+    npm run format >/dev/null
+    npm run lint:fix >/dev/null 2>&1 || true
+  )
+  restage
+
+  echo "→ Proxy: verifying (format · lint · typecheck)"
+  (cd proxy && npm run format:check) || fail "prettier found unformatted proxy code"
+  (cd proxy && npm run lint) || fail "eslint reported problems"
+  (cd proxy && npm run typecheck) || fail "node --check (typecheck) failed"
+fi
+
+echo "✓ pre-commit: all checks passed"

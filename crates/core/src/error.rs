@@ -14,7 +14,9 @@ pub enum AlexandriaError {
     #[error("invalid engram: {0}")]
     InvalidEngram(String),
 
-    #[error("engram id collision: {id} already exists at {path} (existing claim: {existing_claim})")]
+    #[error(
+        "engram id collision: {id} already exists at {path} (existing claim: {existing_claim})"
+    )]
     IdCollision {
         id: String,
         path: String,

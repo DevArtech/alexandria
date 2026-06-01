@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     archive, catalog, consolidate, coverage, expand, forget, init, link, map, meta, recall,
-    reflect, remember, reindex, style, survey, threads, timeline, trace,
+    reflect, reindex, remember, style, survey, threads, timeline, trace,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -86,9 +86,7 @@ enum Commands {
     /// List the collections and tags memory is organized by (with counts)
     Catalog,
     /// Memory-density x-ray for a topic (counts, provenance, recency, detail ratio)
-    Coverage {
-        topic: String,
-    },
+    Coverage { topic: String },
     /// Exhaustive-but-budgeted topic traversal (claims + body token costs)
     Survey {
         topic: String,
@@ -117,9 +115,7 @@ enum Commands {
         to: String,
     },
     /// Walk provenance back to first-party sources
-    Trace {
-        id: String,
-    },
+    Trace { id: String },
     /// Episodic view over time
     Timeline {
         #[arg(long)]
@@ -130,13 +126,9 @@ enum Commands {
         tier: Option<String>,
     },
     /// Move an engram to archive (never deleted)
-    Archive {
-        id: String,
-    },
+    Archive { id: String },
     /// Alias for archive — move to archive tier
-    Forget {
-        id: String,
-    },
+    Forget { id: String },
     /// Slow-pass consolidation (dedupe, promote, decay, re-summarize)
     Consolidate,
     /// Slow reflection pass (same as consolidate in M3)
@@ -241,9 +233,7 @@ fn main() -> Result<()> {
         Commands::Forget { id } => forget::run(cli.library, cli.format, id),
         Commands::Consolidate => consolidate::run(cli.library, cli.format),
         Commands::Reflect { fast } => reflect::run(cli.library, cli.format, fast),
-        Commands::Threads { surface_for } => {
-            threads::run(cli.library, cli.format, surface_for)
-        }
+        Commands::Threads { surface_for } => threads::run(cli.library, cli.format, surface_for),
         Commands::Style { profile } => style::run(cli.library, cli.format, profile),
         Commands::Meta {
             domain,

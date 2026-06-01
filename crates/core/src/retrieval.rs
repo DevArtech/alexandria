@@ -200,16 +200,8 @@ impl<'a> Retrieval<'a> {
         let mut fused = fuse_rrf_multi(
             &[
                 ("lexical", 1.0, lexical_to_rrf_entries(&lexical)),
-                (
-                    "semantic",
-                    1.0,
-                    semantic_to_rrf_entries(&semantic),
-                ),
-                (
-                    "shape",
-                    shape_weight,
-                    shape_to_rrf_entries(&shape_hits),
-                ),
+                ("semantic", 1.0, semantic_to_rrf_entries(&semantic)),
+                ("shape", shape_weight, shape_to_rrf_entries(&shape_hits)),
             ],
             thresholds.rrf_k,
         );
@@ -394,8 +386,8 @@ impl<'a> Retrieval<'a> {
         let token_cost = Engram::estimate_tokens(&row.body);
         let sources_raw = self.index.get_sources(id)?;
         let sources = annotate_sources(sources_raw);
-        let freshness_warning = freshness_hint(self.index, id, &self.config.freshness)?
-            .and_then(|h| h.warning);
+        let freshness_warning =
+            freshness_hint(self.index, id, &self.config.freshness)?.and_then(|h| h.warning);
 
         Ok(ExpandResult {
             id: row.id,
@@ -412,7 +404,11 @@ impl<'a> Retrieval<'a> {
         })
     }
 
-    fn load_engram_for_confidence(&self, id: &str, row: &crate::index::EngramRow) -> Result<Engram> {
+    fn load_engram_for_confidence(
+        &self,
+        id: &str,
+        row: &crate::index::EngramRow,
+    ) -> Result<Engram> {
         if let Some(path) = self.index.file_path(id)? {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(engram) = Engram::parse(&content) {
@@ -491,9 +487,8 @@ impl<'a> Retrieval<'a> {
 
     fn fetch_collections(&self, engram_id: &str) -> Result<Vec<String>> {
         let conn = self.index.connection();
-        let mut stmt = conn.prepare(
-            "SELECT collection FROM collection_members WHERE engram_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT collection FROM collection_members WHERE engram_id = ?1")?;
         let rows = stmt.query_map(params![engram_id], |row| row.get(0))?;
         let mut out = Vec::new();
         for row in rows {
@@ -555,10 +550,7 @@ fn shape_to_rrf_entries(shape: &[crate::index::SemanticHit]) -> Vec<RrfEntry> {
     semantic_to_rrf_entries(shape)
 }
 
-fn fuse_rrf_multi(
-    lists: &[(&str, f64, Vec<RrfEntry>)],
-    k: u32,
-) -> Vec<FusedHit> {
+fn fuse_rrf_multi(lists: &[(&str, f64, Vec<RrfEntry>)], k: u32) -> Vec<FusedHit> {
     let kf = k as f64;
     let mut by_id: HashMap<String, FusedHit> = HashMap::new();
     let mut signal_sets: HashMap<String, HashSet<String>> = HashMap::new();
@@ -593,7 +585,11 @@ fn fuse_rrf_multi(
             hit.signals.sort();
         }
     }
-    fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    fused.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     fused
 }
 
@@ -653,11 +649,7 @@ fn inject_signal_hits(
 
 /// Backward-compatible 2-list fusion for tests.
 #[cfg(test)]
-fn fuse_rrf(
-    lexical: &[FusedHit],
-    semantic: &[crate::index::SemanticHit],
-    k: u32,
-) -> Vec<FusedHit> {
+fn fuse_rrf(lexical: &[FusedHit], semantic: &[crate::index::SemanticHit], k: u32) -> Vec<FusedHit> {
     fuse_rrf_multi(
         &[
             ("lexical", 1.0, lexical_to_rrf_entries(lexical)),
@@ -697,10 +689,7 @@ fn rerank_fused_hits(
     let docs: Vec<String> = fused.iter().take(n).map(|h| h.claim.clone()).collect();
     let scores = reranker.rerank(query, &docs)?;
     let mut order: Vec<(usize, f32)> = (0..n).zip(scores).collect();
-    order.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let reordered: Vec<FusedHit> = order.into_iter().map(|(i, _)| fused[i].clone()).collect();
     for (i, hit) in reordered.into_iter().enumerate() {
         fused[i] = hit;
@@ -749,7 +738,11 @@ fn hit_is_relevant(
         return true;
     }
     // Strong path: semantically close.
-    if hit_semantically_relevant(hit, semantic_distances, thresholds.semantic_weak_max_distance) {
+    if hit_semantically_relevant(
+        hit,
+        semantic_distances,
+        thresholds.semantic_weak_max_distance,
+    ) {
         return true;
     }
     // Lexical-assisted path: one of the few strongest BM25 matches AND still in
@@ -853,28 +846,28 @@ fn hit_confidence(index: &Index, id: &str, status: &str) -> (f64, f64) {
         .flatten()
         .map(|r| r.confidence)
         .unwrap_or(0.9);
-    let mut effective = if let (Ok(Some(path)), Ok(sources)) =
-        (index.file_path(id), index.get_sources(id))
-    {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(mut engram) = Engram::parse(&content) {
-                engram.source = sources;
-                compute_effective_confidence(index, &engram).unwrap_or(confidence)
+    let mut effective =
+        if let (Ok(Some(path)), Ok(sources)) = (index.file_path(id), index.get_sources(id)) {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(mut engram) = Engram::parse(&content) {
+                    engram.source = sources;
+                    compute_effective_confidence(index, &engram).unwrap_or(confidence)
+                } else {
+                    confidence
+                }
             } else {
                 confidence
             }
         } else {
             confidence
-        }
-    } else {
-        confidence
-    };
+        };
     if status == "provisional" {
         effective = effective.min(0.75);
     }
     (confidence, effective)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_context_tree(
     index: &Index,
     config: &Config,
@@ -897,10 +890,7 @@ fn build_context_tree(
     let qualifying: Vec<_> = fused
         .iter()
         .filter(|h| {
-            let boosted = h
-                .signals
-                .iter()
-                .any(|s| s == "structural" || s == "facet");
+            let boosted = h.signals.iter().any(|s| s == "structural" || s == "facet");
             (boosted || h.score >= thresholds.weak_cutoff)
                 && hit_is_relevant(h, semantic_distances, lexical_top, thresholds)
         })
@@ -984,9 +974,7 @@ fn build_context_tree(
         }
     }
 
-    ContextTree {
-        collections: nodes,
-    }
+    ContextTree { collections: nodes }
 }
 
 /// Cap KNN candidate pool (sqlite-vec max k is 4096).
@@ -995,10 +983,7 @@ fn candidate_limit(budget: u32) -> u32 {
 }
 
 fn tree_total_tokens(tree: &ContextTree) -> u32 {
-    tree.collections
-        .iter()
-        .map(|c| c.token_cost)
-        .sum()
+    tree.collections.iter().map(|c| c.token_cost).sum()
 }
 
 /// English stop words bundled from `stopwords_en.txt` (NLTK's canonical list).
@@ -1037,11 +1022,7 @@ fn is_stopword(token: &str) -> bool {
 /// not empty) and semantic retrieval still applies.
 pub fn escape_fts_query(query: &str) -> String {
     let tokens: Vec<&str> = query.split_whitespace().filter(|t| !t.is_empty()).collect();
-    let content: Vec<&str> = tokens
-        .iter()
-        .copied()
-        .filter(|t| !is_stopword(t))
-        .collect();
+    let content: Vec<&str> = tokens.iter().copied().filter(|t| !is_stopword(t)).collect();
     let kept = if content.is_empty() { tokens } else { content };
 
     kept.into_iter()
@@ -1111,7 +1092,10 @@ mod tests {
         setup_with_semantic_thresholds(1.3, 1.15)
     }
 
-    fn setup_with_semantic_thresholds(weak_max: f32, strong_max: f32) -> (TempDir, Library, Index, Config) {
+    fn setup_with_semantic_thresholds(
+        weak_max: f32,
+        strong_max: f32,
+    ) -> (TempDir, Library, Index, Config) {
         let dir = TempDir::new().unwrap();
         let lib = Library::init(dir.path()).unwrap();
         let mut config = Config::load(dir.path()).unwrap();
@@ -1186,7 +1170,15 @@ mod tests {
             collections: vec!["hatco".into()],
         }];
         assert_ne!(
-            classify_state(&facet_only, &HashMap::new(), &HashSet::new(), None, &thresholds, 0, false),
+            classify_state(
+                &facet_only,
+                &HashMap::new(),
+                &HashSet::new(),
+                None,
+                &thresholds,
+                0,
+                false
+            ),
             RecallState::StrongHit
         );
     }
@@ -1232,7 +1224,15 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert("a".into(), 0.1f32);
         assert_eq!(
-            classify_state(&strong, &dist, &HashSet::new(), Some(0.1), &thresholds, 0, false),
+            classify_state(
+                &strong,
+                &dist,
+                &HashSet::new(),
+                Some(0.1),
+                &thresholds,
+                0,
+                false
+            ),
             RecallState::StrongHit
         );
     }
@@ -1249,7 +1249,11 @@ mod tests {
 
         let retrieval = Retrieval::new(&index, &config);
         let result = retrieval
-            .recall("connection pool exhaustion", Some(2000), RecallOptions::default())
+            .recall(
+                "connection pool exhaustion",
+                Some(2000),
+                RecallOptions::default(),
+            )
             .unwrap();
 
         assert_ne!(result.state, RecallState::Nothing);
@@ -1265,8 +1269,18 @@ mod tests {
     #[test]
     fn expand_returns_body_and_links() {
         let (_dir, lib, index, config) = setup();
-        let mut e1 = Engram::new("parent claim", "parent body", Tier::Semantic, Status::Confirmed);
-        let e2 = Engram::new("child claim", "child body", Tier::Semantic, Status::Confirmed);
+        let mut e1 = Engram::new(
+            "parent claim",
+            "parent body",
+            Tier::Semantic,
+            Status::Confirmed,
+        );
+        let e2 = Engram::new(
+            "child claim",
+            "child body",
+            Tier::Semantic,
+            Status::Confirmed,
+        );
         e1.links.push(crate::engram::Link {
             rel: Rel::Supports,
             to: e2.id.clone(),
@@ -1303,7 +1317,15 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert("a".into(), 0.9f32);
         assert_eq!(
-            classify_state(&weak, &dist, &HashSet::new(), Some(0.9), &thresholds, 5, false),
+            classify_state(
+                &weak,
+                &dist,
+                &HashSet::new(),
+                Some(0.9),
+                &thresholds,
+                5,
+                false
+            ),
             RecallState::HighConfidenceGap
         );
     }
@@ -1326,7 +1348,15 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert("a".into(), 0.9f32);
         assert_eq!(
-            classify_state(&weak, &dist, &HashSet::new(), Some(0.9), &thresholds, 0, true),
+            classify_state(
+                &weak,
+                &dist,
+                &HashSet::new(),
+                Some(0.9),
+                &thresholds,
+                0,
+                true
+            ),
             RecallState::LowConfidenceGap
         );
     }
@@ -1335,11 +1365,17 @@ mod tests {
     fn hash_embedder_distance_sanity() {
         use crate::provider::{embed_sync, HashEmbedder};
         let e = HashEmbedder;
-        let related_a = embed_sync(&e, &["database connection pooling under heavy load".into()]).unwrap()[0].clone();
+        let related_a = embed_sync(&e, &["database connection pooling under heavy load".into()])
+            .unwrap()[0]
+            .clone();
         let related_b = embed_sync(&e, &["connection pool exhaustion".into()]).unwrap()[0].clone();
         let unrelated = embed_sync(&e, &["xylophone quasar nebula".into()]).unwrap()[0].clone();
         fn l2(a: &[f32], b: &[f32]) -> f32 {
-            a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>().sqrt()
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum::<f32>()
+                .sqrt()
         }
         let d_related = l2(&related_a, &related_b);
         let d_unrelated = l2(&related_a, &unrelated);

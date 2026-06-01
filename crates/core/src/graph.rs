@@ -461,12 +461,7 @@ mod tests {
     #[test]
     fn trace_walks_derived_to_told() {
         let (_dir, lib, index, _config) = setup();
-        let mut told = Engram::new(
-            "user said rust",
-            "body",
-            Tier::Episodic,
-            Status::Confirmed,
-        );
+        let mut told = Engram::new("user said rust", "body", Tier::Episodic, Status::Confirmed);
         told.source.push(Source {
             kind: "conversation".into(),
             r#ref: "conv_1".into(),
@@ -517,9 +512,7 @@ mod tests {
         assert_eq!(all.count, 2);
         assert_eq!(all.entries[0].claim, "first");
 
-        let episodic = graph
-            .timeline(None, None, Some(Tier::Episodic))
-            .unwrap();
+        let episodic = graph.timeline(None, None, Some(Tier::Episodic)).unwrap();
         assert_eq!(episodic.count, 1);
         assert_eq!(episodic.entries[0].claim, "first");
     }
@@ -543,15 +536,11 @@ mod tests {
         remember(&lib, &index, &a);
 
         let graph = Graph::new(&index);
-        let depth1 = graph
-            .traverse(&a.id, Some(&[Rel::DependsOn]), 1)
-            .unwrap();
+        let depth1 = graph.traverse(&a.id, Some(&[Rel::DependsOn]), 1).unwrap();
         assert_eq!(depth1.nodes.len(), 1);
         assert_eq!(depth1.nodes[0].id, b.id);
 
-        let depth2 = graph
-            .traverse(&a.id, Some(&[Rel::DependsOn]), 2)
-            .unwrap();
+        let depth2 = graph.traverse(&a.id, Some(&[Rel::DependsOn]), 2).unwrap();
         assert_eq!(depth2.nodes.len(), 2);
     }
 }

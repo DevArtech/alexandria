@@ -35,20 +35,62 @@ export function createOAuthServer(config, store, log) {
       return handleToken(req, res);
     }
     if (path === "/login" && req.method === "GET") {
-      return sendHtml(res, 200, loginPage(url.searchParams.get("return") || "/authorize"));
+      return renderLogin(res, 200, url.searchParams.get("return") || "/authorize");
     }
     if (path === "/login" && req.method === "POST") {
       return handleLogin(req, res);
+    }
+    if (path === "/logout" && (req.method === "GET" || req.method === "POST")) {
+      return handleLogout(req, res);
     }
 
     return false;
   }
 
+  function renderLogin(res, status, ret, error = "") {
+    const csrf = randomBytes(16).toString("base64url");
+    const secure = config.resourceUrl?.startsWith("https:") ?? true;
+    const html = loginPage(ret, error, csrf);
+    res.writeHead(status, {
+      "content-type": "text/html; charset=utf-8",
+      "set-cookie": csrfCookie(config.csrfCookieName, csrf, secure),
+    });
+    res.end(html);
+  }
+
+  function handleLogout(req, res) {
+    const cookies = parseCookies(req.headers.cookie || "");
+    const sid = cookies[config.sessionCookieName];
+    if (sid) store.deleteSession(sid);
+    const secure = config.resourceUrl?.startsWith("https:") ?? true;
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "set-cookie": expireCookie(config.sessionCookieName, secure),
+    });
+    res.end("<!doctype html><html><body><p>Signed out.</p></body></html>");
+  }
+
+  async function readFormSafe(req, res) {
+    try {
+      return await readFormBody(req, config.maxBodyBytes);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        oauthError(res, 413, "invalid_request", "request body too large");
+      } else {
+        oauthError(res, 400, "invalid_request", "could not read request body");
+      }
+      return null;
+    }
+  }
+
   async function handleRegister(req, res) {
     let body;
     try {
-      body = await readJsonBody(req);
-    } catch {
+      body = await readJsonBody(req, config.maxBodyBytes);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        return oauthError(res, 413, "invalid_client_metadata", "request body too large");
+      }
       return oauthError(res, 400, "invalid_client_metadata", "invalid JSON body");
     }
 
@@ -95,7 +137,8 @@ export function createOAuthServer(config, store, log) {
   }
 
   async function handleAuthorizePost(req, res, url) {
-    const form = await readFormBody(req);
+    const form = await readFormSafe(req, res);
+    if (!form) return;
     const params = url.searchParams;
     for (const [k, v] of form.entries()) params.set(k, v);
 
@@ -132,16 +175,25 @@ export function createOAuthServer(config, store, log) {
   }
 
   async function handleLogin(req, res) {
-    const form = await readFormBody(req);
+    const form = await readFormSafe(req, res);
+    if (!form) return;
     const username = form.get("username") || "";
     const password = form.get("password") || "";
     const ret = form.get("return") || "/authorize";
+
+    // CSRF: double-submit cookie. The token in the form must match the cookie
+    // set when the form was rendered (SameSite=Lax already blocks the common case).
+    const csrfCookieVal = parseCookies(req.headers.cookie || "")[config.csrfCookieName] || "";
+    const csrfForm = form.get("csrf") || "";
+    if (!csrfCookieVal || !constantTimeEq(csrfCookieVal, csrfForm)) {
+      return renderLogin(res, 403, ret, "Session expired. Please try again.");
+    }
 
     if (
       !constantTimeEq(username, config.loginUsername) ||
       !constantTimeEq(password, config.loginPassword)
     ) {
-      return sendHtml(res, 401, loginPage(ret, "Invalid username or password"));
+      return renderLogin(res, 401, ret, "Invalid username or password");
     }
 
     const sid = randomBytes(24).toString("base64url");
@@ -152,13 +204,19 @@ export function createOAuthServer(config, store, log) {
     const secureCookie = config.resourceUrl?.startsWith("https:") ?? true;
     res.writeHead(302, {
       location: ret,
-      "set-cookie": sessionCookie(config.sessionCookieName, sid, config.sessionTtlSec, secureCookie),
+      "set-cookie": sessionCookie(
+        config.sessionCookieName,
+        sid,
+        config.sessionTtlSec,
+        secureCookie,
+      ),
     });
     res.end();
   }
 
   async function handleToken(req, res) {
-    const form = await readFormBody(req);
+    const form = await readFormSafe(req, res);
+    if (!form) return;
     const grant = form.get("grant_type");
 
     if (grant === "authorization_code") {
@@ -228,11 +286,7 @@ export function createOAuthServer(config, store, log) {
   async function verifyToken(token) {
     const { jwtVerify } = await import("jose");
     const key = await importJWK(store.keys.publicJwk, "RS256");
-    const audiences = [
-      config.mcpResourceUrl,
-      config.resourceUrl,
-      config.audience,
-    ].filter(Boolean);
+    const audiences = [config.mcpResourceUrl, config.resourceUrl, config.audience].filter(Boolean);
     try {
       const { payload } = await jwtVerify(token, key, {
         issuer,
@@ -283,10 +337,19 @@ export function createOAuthServer(config, store, log) {
   function isAllowedRedirect(uri) {
     try {
       const u = new URL(uri);
-      if (u.protocol !== "https:") return false;
-      // Claude MCP callback and localhost dev.
-      if (u.hostname === "claude.ai" && u.pathname.startsWith("/api/mcp/")) return true;
-      if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
+      // Production callback: Claude MCP over HTTPS only.
+      if (
+        u.protocol === "https:" &&
+        u.hostname === "claude.ai" &&
+        u.pathname.startsWith("/api/mcp/")
+      ) {
+        return true;
+      }
+      // Loopback dev clients are off by default; native apps use http on a
+      // dynamic loopback port, so allow http/https loopback when enabled.
+      if (config.allowLocalhostRedirects && isLoopbackHost(u.hostname)) {
+        return u.protocol === "http:" || u.protocol === "https:";
+      }
       return false;
     } catch {
       return false;
@@ -323,6 +386,15 @@ function protectedResourceMetadata(config, resourceSuffix = "") {
   };
 }
 
+function isLoopbackHost(hostname) {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "::1"
+  );
+}
+
 function verifyPkce(verifier, challenge, method) {
   if (method !== "S256") return false;
   const digest = createHash("sha256").update(verifier).digest("base64url");
@@ -337,7 +409,11 @@ function assertScopes(payload, requiredScopes) {
   );
   const missing = requiredScopes.filter((s) => !granted.has(s));
   if (missing.length) {
-    throw new AuthError("insufficient_scope", `missing required scope(s): ${missing.join(", ")}`, 403);
+    throw new AuthError(
+      "insufficient_scope",
+      `missing required scope(s): ${missing.join(", ")}`,
+      403,
+    );
   }
 }
 
@@ -352,6 +428,18 @@ function sessionCookie(name, sid, maxAgeSec, secure = true) {
   return `${name}=${sid}; ${flags.join("; ")}`;
 }
 
+function csrfCookie(name, val, secure = true) {
+  const flags = ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=600"];
+  if (secure) flags.unshift("Secure");
+  return `${name}=${val}; ${flags.join("; ")}`;
+}
+
+function expireCookie(name, secure = true) {
+  const flags = ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=0"];
+  if (secure) flags.unshift("Secure");
+  return `${name}=; ${flags.join("; ")}`;
+}
+
 function parseCookies(header) {
   const out = {};
   for (const part of header.split(";")) {
@@ -362,13 +450,14 @@ function parseCookies(header) {
   return out;
 }
 
-function loginPage(returnUrl, error = "") {
+function loginPage(returnUrl, error = "", csrf = "") {
   const err = error ? `<p style="color:#b00020">${escapeHtml(error)}</p>` : "";
   return `<!doctype html><html><head><meta charset="utf-8"><title>Alexandria Login</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:420px;margin:4rem auto;padding:1rem">
 <h1>Alexandria</h1><p>Sign in to authorize MCP access.</p>${err}
 <form method="POST" action="/login">
 <input type="hidden" name="return" value="${escapeHtml(returnUrl)}"/>
+<input type="hidden" name="csrf" value="${escapeHtml(csrf)}"/>
 <label>Username<br/><input name="username" required autocomplete="username"/></label><br/><br/>
 <label>Password<br/><input name="password" type="password" required autocomplete="current-password"/></label><br/><br/>
 <button type="submit">Sign in</button>
@@ -390,21 +479,45 @@ function constantTimeEq(a, b) {
   return timingSafeEqual(aa, bb);
 }
 
-async function readJsonBody(req) {
-  const raw = await readBody(req);
+class BodyTooLargeError extends Error {
+  constructor(limit) {
+    super(`request body exceeds ${limit} bytes`);
+    this.name = "BodyTooLargeError";
+    this.limit = limit;
+  }
+}
+
+async function readJsonBody(req, maxBytes) {
+  const raw = await readBody(req, maxBytes);
   return JSON.parse(raw.toString("utf8"));
 }
 
-async function readFormBody(req) {
-  const raw = await readBody(req);
+async function readFormBody(req, maxBytes) {
+  const raw = await readBody(req, maxBytes);
   return new URLSearchParams(raw.toString("utf8"));
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = 64 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
+    let size = 0;
+    let overflowed = false;
+    req.on("data", (c) => {
+      // Once over the cap we stop buffering but keep draining the socket so the
+      // handler's error response can flush cleanly (destroying it here would
+      // close the connection before the client sees the 413).
+      if (overflowed) return;
+      size += c.length;
+      if (maxBytes > 0 && size > maxBytes) {
+        overflowed = true;
+        reject(new BodyTooLargeError(maxBytes));
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (!overflowed) resolve(Buffer.concat(chunks));
+    });
     req.on("error", reject);
   });
 }
@@ -416,11 +529,6 @@ function sendJson(res, status, body) {
     "content-length": Buffer.byteLength(payload),
   });
   res.end(payload);
-}
-
-function sendHtml(res, status, html) {
-  res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
-  res.end(html);
 }
 
 function oauthError(res, status, error, description) {

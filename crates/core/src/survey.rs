@@ -131,8 +131,8 @@ pub fn survey(
         } else {
             0.0
         };
-        let freshness_warning = freshness_hint(index, &row.id, &config.freshness)?
-            .and_then(|h| h.warning);
+        let freshness_warning =
+            freshness_hint(index, &row.id, &config.freshness)?.and_then(|h| h.warning);
         hits.push(SurveyHit {
             id: row.id,
             claim: row.claim,
@@ -192,7 +192,10 @@ fn build_gaps(
             .engram_ids_matching(&collections, &tags)?
             .into_iter()
             .collect();
-        let missing: usize = facet_ids.iter().filter(|id| !included.contains(*id)).count();
+        let missing: usize = facet_ids
+            .iter()
+            .filter(|id| !included.contains(*id))
+            .count();
         if missing > 0 {
             gaps.push(SurveyGap {
                 facet_kind: match facet.kind {

@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::error::{AlexandriaError, Result};
-use crate::provider::http::{api_key_from_env, check_response, new_client};
+use crate::provider::http::{api_key_from_env, body_snippet, check_response, new_client};
 use crate::provider::{Completer, Prompt};
 
 pub struct AnthropicCompleter {
@@ -60,7 +60,10 @@ impl Completer for AnthropicCompleter {
             .map_err(|e| AlexandriaError::Provider(format!("anthropic read body failed: {e}")))?;
         check_response("anthropic", status, &text_body)?;
         let parsed: AnthropicMessagesResponse = serde_json::from_str(&text_body).map_err(|e| {
-            AlexandriaError::Provider(format!("anthropic invalid JSON: {e}; body: {text_body}"))
+            AlexandriaError::Provider(format!(
+                "anthropic invalid JSON: {e}; body: {}",
+                body_snippet(&text_body)
+            ))
         })?;
         let text = parsed
             .content
@@ -69,10 +72,9 @@ impl Completer for AnthropicCompleter {
             .collect::<Vec<_>>()
             .join("");
         if text.trim().is_empty() {
-            return Err(AlexandriaError::Provider(
-                "anthropic returned empty content".into(),
-            )
-            .into());
+            return Err(
+                AlexandriaError::Provider("anthropic returned empty content".into()).into(),
+            );
         }
         Ok(text)
     }

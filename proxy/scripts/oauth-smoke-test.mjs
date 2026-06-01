@@ -52,10 +52,7 @@ async function main() {
   const authUrl = new URL(`${base}/authorize`);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", client.client_id);
-  authUrl.searchParams.set(
-    "redirect_uri",
-    "https://claude.ai/api/mcp/auth_callback",
-  );
+  authUrl.searchParams.set("redirect_uri", "https://claude.ai/api/mcp/auth_callback");
   authUrl.searchParams.set("scope", "alexandria:read alexandria:write");
   authUrl.searchParams.set("code_challenge", challenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
@@ -70,15 +67,26 @@ async function main() {
 
   res = await fetch(`${base}${loginLoc}`, { redirect: "manual" });
   if (res.status !== 200) throw new Error(`login form: ${res.status}`);
+  // Capture the CSRF cookie set when the form was rendered; echo it back as the
+  // form field (double-submit) and carry the cookie on the POST.
+  Object.assign(cookies, parseSetCookie(res));
+  const csrf = cookies.alexandria_csrf || "";
+  if (!csrf) throw new Error("login form did not set a CSRF cookie");
 
   const body = new URLSearchParams({
     username: loginUser,
     password: loginPass,
+    csrf,
     return: authUrl.pathname + authUrl.search,
   });
   res = await fetch(`${base}/login`, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      cookie: Object.entries(cookies)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("; "),
+    },
     body,
     redirect: "manual",
   });

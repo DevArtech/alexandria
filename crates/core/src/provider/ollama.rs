@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::error::{AlexandriaError, Result};
-use crate::provider::http::{check_response, new_client};
+use crate::provider::http::{body_snippet, check_response, new_client};
 use crate::provider::{Completer, Embedder, Prompt};
 
 pub struct OllamaEmbedder {
@@ -156,7 +156,10 @@ impl Completer for OllamaCompleter {
             .map_err(|e| AlexandriaError::Provider(format!("ollama read body failed: {e}")))?;
         check_response("ollama", status, &text_body)?;
         let parsed: OllamaChatResponse = serde_json::from_str(&text_body).map_err(|e| {
-            AlexandriaError::Provider(format!("ollama invalid JSON: {e}; body: {text_body}"))
+            AlexandriaError::Provider(format!(
+                "ollama invalid JSON: {e}; body: {}",
+                body_snippet(&text_body)
+            ))
         })?;
         Ok(parsed.message.content)
     }

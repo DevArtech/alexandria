@@ -147,9 +147,7 @@ pub fn remember(state: &mut ServerState, params: RememberParams) -> Result<Value
     }
 
     let path = state.library.write_engram(&engram)?;
-    state
-        .index
-        .upsert(&engram, &path.display().to_string())?;
+    state.index.upsert(&engram, &path.display().to_string())?;
 
     ServerState::to_json(&serde_json::json!({
         "id": engram.id,
@@ -178,25 +176,13 @@ pub fn trace(state: &ServerState, params: IdParams) -> Result<Value> {
 
 pub fn timeline(state: &ServerState, params: TimelineParams) -> Result<Value> {
     let graph = Graph::new(&state.index);
-    let tier = params
-        .tier
-        .as_deref()
-        .map(Tier::parse)
-        .transpose()?;
-    let result = graph.timeline(
-        params.since.as_deref(),
-        params.until.as_deref(),
-        tier,
-    )?;
+    let tier = params.tier.as_deref().map(Tier::parse).transpose()?;
+    let result = graph.timeline(params.since.as_deref(), params.until.as_deref(), tier)?;
     ServerState::to_json(&result)
 }
 
 pub fn threads(state: &ServerState, params: ThreadsParams) -> Result<Value> {
-    let result = list_threads(
-        &state.library,
-        &state.index,
-        params.surface_for.as_deref(),
-    )?;
+    let result = list_threads(&state.library, &state.index, params.surface_for.as_deref())?;
     ServerState::to_json(&result)
 }
 

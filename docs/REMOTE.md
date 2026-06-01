@@ -164,6 +164,13 @@ Then TLS-terminate `:8081` as above.
 
 All clients use the **proxy URL**: `https://memory.example.com/mcp`.
 
+> **Prefer the static bearer token where the client supports it.** OAuth access
+> tokens expire, so browser-OAuth clients (Claude web) periodically force a
+> re-sign-in. The static `ALEXANDRIA_MCP_TOKEN` bearer is long-lived and avoids
+> those short-term sign-outs — use it for Cursor, Codex, and Claude Desktop/API
+> (set `ALLOW_LEGACY_STATIC_TOKEN=true`), and reserve OAuth for clients like
+> Claude web that require it.
+
 ### Claude web (Connectors)
 
 Claude web requires OAuth and performs Dynamic Client Registration automatically.
@@ -242,17 +249,9 @@ paste its guidance into the agent's system prompt. Generate the file with
 ## 4. OAuth proxy configuration
 
 All proxy settings are environment variables. In Docker Compose these live in the
-repo-root `.env` and are passed to `alexandria-oauth-proxy`.
-
-| Variable | Required | Description |
-| --- | --- | --- |
-| `RESOURCE_URL` | yes | Public HTTPS origin of the proxy (e.g. `https://memory.example.com`) |
-| `LOGIN_PASSWORD` | yes | Password for the browser login form |
-| `ALEXANDRIA_MCP_TOKEN` | yes | Static bearer injected toward `alexandria-mcp` |
-| `LOGIN_USERNAME` | no | Login username (default `admin`) |
-| `ALLOW_LEGACY_STATIC_TOKEN` | no | If `true`, accept static bearer from clients (default `false`) |
-| `OAUTH_AUDIENCE` | no | JWT audience (defaults to `RESOURCE_URL/mcp`) |
-| `OAUTH_SCOPES` | no | Advertised scopes (default `alexandria:read alexandria:write`) |
+repo-root `.env` and are passed to `alexandria-oauth-proxy`. The deployment-critical
+ones are shown in the `.env` example in [section 2](#2-configure-and-run-docker); the
+**full variable reference (with defaults)** is in [proxy/README.md](../proxy/README.md#configuration).
 
 Signing keys and DCR-registered clients persist in the `oauth_proxy_data` Docker
 volume (`DATA_DIR=/data`). Back up this volume if you rely on long-lived DCR

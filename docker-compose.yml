@@ -41,7 +41,21 @@ services:
       LOGIN_PASSWORD: ${LOGIN_PASSWORD:?set LOGIN_PASSWORD in .env}
       DATA_DIR: /data
       ALLOW_LEGACY_STATIC_TOKEN: ${ALLOW_LEGACY_STATIC_TOKEN:-false}
+      # If legacy mode is enabled, this MUST be set and MUST differ from
+      # ALEXANDRIA_MCP_TOKEN (the proxy refuses to start otherwise).
       LEGACY_BEARER_TOKEN: ${LEGACY_BEARER_TOKEN:-}
+      # DoS / abuse hardening (all optional; sane defaults baked in).
+      # Set TRUST_PROXY=true only when a trusted TLS terminator sets X-Forwarded-For.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-65536}
+      HEADERS_TIMEOUT_MS: ${HEADERS_TIMEOUT_MS:-60000}
+      REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-120000}
+      PROXY_TIMEOUT_MS: ${PROXY_TIMEOUT_MS:-0}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      LOGIN_RATE_LIMIT_MAX: ${LOGIN_RATE_LIMIT_MAX:-10}
+      REGISTER_RATE_LIMIT_MAX: ${REGISTER_RATE_LIMIT_MAX:-20}
+      # Loopback redirect URIs are dev-only; keep off in production.
+      ALLOW_LOCALHOST_REDIRECTS: ${ALLOW_LOCALHOST_REDIRECTS:-false}
       PORT: "8081"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:

@@ -43,9 +43,7 @@ pub fn freshness_hint(
 }
 
 /// Annotate source rows with age in days when observed is known.
-pub fn annotate_sources(
-    sources: Vec<crate::engram::Source>,
-) -> Vec<SourceFreshness> {
+pub fn annotate_sources(sources: Vec<crate::engram::Source>) -> Vec<SourceFreshness> {
     sources
         .into_iter()
         .map(|s| {
