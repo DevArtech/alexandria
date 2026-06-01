@@ -186,7 +186,7 @@ fn post_turn_consolidate(
     let config = Config::load(&library.root)?;
     let index = Index::open(library, &config)?;
     let completer = build_completer(&config)?;
-    consolidate_slow(library, &index, &config, completer.as_deref())?;
+    consolidate_slow(library, &index, &config, completer.as_deref(), false)?;
     *consolidated = true;
     consolidate_fast(library, &config)?;
     *fast_reflection = true;

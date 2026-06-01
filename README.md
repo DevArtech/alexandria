@@ -47,7 +47,7 @@ cp target/release/alexandria target/release/alexandria-mcp target/release/alexan
 
 > **Contributing?** Run `./scripts/setup-hooks.sh` once to enable the pre-commit gate. It auto-formats and lints what it can (`cargo fmt`, `cargo clippy --fix`, `prettier`, `eslint --fix`), then blocks the commit unless `cargo fmt`/`clippy`/`cargo test` and the proxy's `prettier`/`eslint`/typecheck all pass. The same checks run in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request.
 >
-> **Releases.** Pushes to `main` run the release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)). If the workspace Cargo version maps to a new tag (for example `0.1.1` -> `v0.1.1`), GitHub Actions builds the release binaries with `cargo build --workspace --release --locked` and publishes a GitHub Release containing `alexandria`, `alexandria-mcp`, and `alexandria-brain`.
+> **Releases.** Pushes to `main` run semantic-version release processing ([`.github/workflows/semver.yml`](.github/workflows/semver.yml)). Conventional commits (`fix:`, `feat:`, and breaking-change commits) are collected into a release PR that updates the shared Cargo workspace version and root changelog. When that PR is merged, the release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) maps the new Cargo version to a tag (for example `0.1.1` -> `v0.1.1`), builds with `cargo build --workspace --release --locked`, and publishes a GitHub Release containing `alexandria`, `alexandria-mcp`, and `alexandria-brain`.
 
 ### Use Alexandria directly (CLI)
 

@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::OutputFormat;
 
-pub fn run(library_path: Option<PathBuf>, format: OutputFormat) -> Result<()> {
+pub fn run(library_path: Option<PathBuf>, format: OutputFormat, dry_run: bool) -> Result<()> {
     let library = match library_path {
         Some(p) => Library::discover(Some(&p))?,
         None => Library::discover(None)?,
@@ -13,7 +13,7 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat) -> Result<()> {
     let config = Config::load(&library.root)?;
     let index = Index::open(&library, &config)?;
     let completer = build_completer(&config)?;
-    let report = consolidate_slow(&library, &index, &config, completer.as_deref())?;
+    let report = consolidate_slow(&library, &index, &config, completer.as_deref(), dry_run)?;
 
     match format {
         OutputFormat::Human => print_human(&report),
@@ -23,6 +23,9 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat) -> Result<()> {
 }
 
 pub fn print_human(report: &alexandria_core::ConsolidationReport) {
+    if report.dry_run {
+        println!("dry run (no changes written)");
+    }
     println!("merged: {}", report.merged.len());
     for item in &report.merged {
         println!("  {item}");
@@ -45,4 +48,7 @@ pub fn print_human(report: &alexandria_core::ConsolidationReport) {
     }
     println!("shapes_extracted: {}", report.shapes_extracted.len());
     println!("relational_decayed: {}", report.relational_decayed.len());
+    if report.library_overview_written {
+        println!("library_overview: updated");
+    }
 }

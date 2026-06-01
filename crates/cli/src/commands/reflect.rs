@@ -29,7 +29,7 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat, fast: bool) -> R
 
     let index = Index::open(&library, &config)?;
     let completer = build_completer(&config)?;
-    let report = consolidate_slow(&library, &index, &config, completer.as_deref())?;
+    let report = consolidate_slow(&library, &index, &config, completer.as_deref(), false)?;
 
     match format {
         OutputFormat::Human => {

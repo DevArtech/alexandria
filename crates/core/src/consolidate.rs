@@ -10,6 +10,7 @@ use crate::engram::{Engram, Link, Rel, Status, Tier};
 use crate::error::Result;
 use crate::graph::{has_conflicts_confirmed, incoming_supports_count};
 use crate::index::Index;
+use crate::library_overview::regenerate_library_overview;
 use crate::meta::record_promotion_reversal;
 use crate::ops::Ops;
 use crate::provider::Completer;
@@ -25,6 +26,10 @@ pub struct ConsolidationReport {
     pub collections_resummarized: Vec<String>,
     pub shapes_extracted: Vec<String>,
     pub relational_decayed: Vec<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub library_overview_written: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,18 +43,26 @@ pub fn consolidate_slow(
     index: &Index,
     config: &Config,
     completer: Option<&dyn Completer>,
+    dry_run: bool,
 ) -> Result<ConsolidationReport> {
-    let mut report = ConsolidationReport::default();
+    let mut report = ConsolidationReport {
+        dry_run,
+        ..ConsolidationReport::default()
+    };
     let ops = Ops::new(library, index);
     let cfg = &config.consolidation;
 
-    dedupe_merge(library, index, &ops, cfg, &mut report)?;
-    apply_promotion_ladder(library, index, &ops, cfg, &mut report)?;
-    extract_shapes(library, index, completer, &mut report)?;
-    decay_salience(library, index, cfg, &mut report)?;
-    decay_relational_salience(library, index, &config.relational, &mut report)?;
-    consolidate_relational(library, index, &config.relational, &mut report)?;
-    resummarize_collections(library, &mut report)?;
+    dedupe_merge(library, index, &ops, cfg, dry_run, &mut report)?;
+    apply_promotion_ladder(library, index, &ops, cfg, dry_run, &mut report)?;
+    extract_shapes(library, index, completer, dry_run, &mut report)?;
+    decay_salience(library, index, cfg, dry_run, &mut report)?;
+    decay_relational_salience(library, index, &config.relational, dry_run, &mut report)?;
+    consolidate_relational(library, index, &config.relational, dry_run, &mut report)?;
+    resummarize_collections(library, dry_run, &mut report)?;
+    if !dry_run {
+        let overview = regenerate_library_overview(library, index)?;
+        report.library_overview_written = overview.written;
+    }
 
     Ok(report)
 }
@@ -99,6 +112,7 @@ fn dedupe_merge(
     index: &Index,
     ops: &Ops,
     cfg: &ConsolidationConfig,
+    dry_run: bool,
     report: &mut ConsolidationReport,
 ) -> Result<()> {
     let scan = library.scan_engrams();
@@ -169,8 +183,8 @@ fn dedupe_merge(
                 });
             }
 
-            persist_engram(library, index, &merged)?;
-            persist_engram(library, index, &loser)?;
+            persist_engram(library, index, &merged, dry_run)?;
+            persist_engram(library, index, &loser, dry_run)?;
 
             merged_ids.insert(loser.id.clone());
             active[survivor_idx] = merged;
@@ -189,6 +203,7 @@ fn apply_promotion_ladder(
     index: &Index,
     _ops: &Ops,
     cfg: &ConsolidationConfig,
+    dry_run: bool,
     report: &mut ConsolidationReport,
 ) -> Result<()> {
     let scan = library.scan_engrams();
@@ -218,8 +233,10 @@ fn apply_promotion_ladder(
             } else {
                 "provisional"
             };
-            record_promotion_reversal(library, &engram.id, from_tier)?;
-            index.insert_promotion_reversal(&engram.id, from_tier, &Utc::now())?;
+            if !dry_run {
+                record_promotion_reversal(library, &engram.id, from_tier)?;
+                index.insert_promotion_reversal(&engram.id, from_tier, &Utc::now())?;
+            }
         } else if engram.tier == Tier::Episodic
             && engram.status != Status::Provisional
             && supports >= cfg.promote_episodic_to_provisional
@@ -244,7 +261,7 @@ fn apply_promotion_ladder(
         }
 
         if changed {
-            persist_engram(library, index, &engram)?;
+            persist_engram(library, index, &engram, dry_run)?;
         }
     }
     Ok(())
@@ -254,9 +271,12 @@ fn extract_shapes(
     library: &Library,
     index: &Index,
     completer: Option<&dyn Completer>,
+    dry_run: bool,
     report: &mut ConsolidationReport,
 ) -> Result<()> {
-    index.ensure_shapes_vec_table()?;
+    if !dry_run {
+        index.ensure_shapes_vec_table()?;
+    }
     let scan = library.scan_engrams();
     for mut engram in scan.engrams {
         if engram.tier != Tier::Episodic {
@@ -269,8 +289,10 @@ fn extract_shapes(
         let shape_id = format!("shp_{}", &engram.id[4..]);
         engram.shape_ref = Some(shape_id);
         engram.updated = Utc::now();
-        persist_engram(library, index, &engram)?;
-        index.upsert_shape_embedding(&engram.id, &summary)?;
+        persist_engram(library, index, &engram, dry_run)?;
+        if !dry_run {
+            index.upsert_shape_embedding(&engram.id, &summary)?;
+        }
         report.shapes_extracted.push(engram.id.clone());
     }
     Ok(())
@@ -280,6 +302,7 @@ fn decay_relational_salience(
     library: &Library,
     index: &Index,
     cfg: &crate::config::RelationalConfig,
+    dry_run: bool,
     report: &mut ConsolidationReport,
 ) -> Result<()> {
     let now = Utc::now();
@@ -302,7 +325,7 @@ fn decay_relational_salience(
         }
         engram.salience = new_salience;
         engram.updated = Utc::now();
-        persist_engram(library, index, &engram)?;
+        persist_engram(library, index, &engram, dry_run)?;
         report.relational_decayed.push(engram.id.clone());
     }
     Ok(())
@@ -312,6 +335,7 @@ fn consolidate_relational(
     library: &Library,
     index: &Index,
     cfg: &crate::config::RelationalConfig,
+    dry_run: bool,
     report: &mut ConsolidationReport,
 ) -> Result<()> {
     let scan = library.scan_engrams();
@@ -329,7 +353,7 @@ fn consolidate_relational(
         {
             engram.status = Status::Confirmed;
             engram.updated = Utc::now();
-            persist_engram(library, index, &engram)?;
+            persist_engram(library, index, &engram, dry_run)?;
             report
                 .promoted
                 .push(format!("{}: relational->confirmed", engram.id));
@@ -384,6 +408,7 @@ fn decay_salience(
     library: &Library,
     index: &Index,
     cfg: &ConsolidationConfig,
+    dry_run: bool,
     report: &mut ConsolidationReport,
 ) -> Result<()> {
     let now = Utc::now();
@@ -403,13 +428,17 @@ fn decay_salience(
         }
         engram.salience = new_salience;
         engram.updated = Utc::now();
-        persist_engram(library, index, &engram)?;
+        persist_engram(library, index, &engram, dry_run)?;
         report.decayed.push(engram.id.clone());
     }
     Ok(())
 }
 
-fn resummarize_collections(library: &Library, report: &mut ConsolidationReport) -> Result<()> {
+fn resummarize_collections(
+    library: &Library,
+    dry_run: bool,
+    report: &mut ConsolidationReport,
+) -> Result<()> {
     let scan = library.scan_engrams();
     let mut by_collection: HashMap<String, Vec<&Engram>> = HashMap::new();
     for engram in &scan.engrams {
@@ -425,7 +454,9 @@ fn resummarize_collections(library: &Library, report: &mut ConsolidationReport) 
     }
 
     let collections_dir = library.root.join("collections");
-    std::fs::create_dir_all(&collections_dir)?;
+    if !dry_run {
+        std::fs::create_dir_all(&collections_dir)?;
+    }
 
     for (name, members) in by_collection {
         let mut claims: Vec<String> = members
@@ -446,14 +477,19 @@ fn resummarize_collections(library: &Library, report: &mut ConsolidationReport) 
             Utc::now().to_rfc3339(),
             members.len()
         );
-        std::fs::write(&path, content)?;
+        if !dry_run {
+            std::fs::write(&path, content)?;
+        }
         report.collections_resummarized.push(name);
     }
 
     Ok(())
 }
 
-fn persist_engram(library: &Library, index: &Index, engram: &Engram) -> Result<()> {
+fn persist_engram(library: &Library, index: &Index, engram: &Engram, dry_run: bool) -> Result<()> {
+    if dry_run {
+        return Ok(());
+    }
     let old_path = index.file_path(&engram.id)?;
     let path = library.save_relocating(engram, old_path.as_deref().map(Path::new))?;
     index.upsert(engram, &path.display().to_string())?;
@@ -569,7 +605,7 @@ mod tests {
         remember(&lib, &index, &a);
         remember(&lib, &index, &b);
 
-        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None, false).unwrap();
         assert!(!report.merged.is_empty());
 
         let a_state = lib.read_engram(&lib.engram_path(&a).unwrap());
@@ -606,13 +642,13 @@ mod tests {
         remember(&lib, &index, &supporter1);
         remember(&lib, &index, &supporter2);
 
-        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None, false).unwrap();
         assert!(report
             .promoted
             .iter()
             .any(|p| p.contains("episodic->provisional")));
 
-        let report2 = consolidate_slow(&lib, &index, &config, None).unwrap();
+        let report2 = consolidate_slow(&lib, &index, &config, None, false).unwrap();
         assert!(
             report2
                 .promoted
@@ -633,7 +669,7 @@ mod tests {
         e.salience = 0.8;
         remember(&lib, &index, &e);
 
-        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None, false).unwrap();
         assert!(report.decayed.contains(&e.id));
         let updated = lib.read_engram(&lib.engram_path(&e).unwrap()).unwrap();
         assert!(updated.salience < 0.8);
@@ -647,8 +683,8 @@ mod tests {
         e.collections.push("demo".into());
         remember(&lib, &index, &e);
 
-        let first = consolidate_slow(&lib, &index, &config, None).unwrap();
-        let second = consolidate_slow(&lib, &index, &config, None).unwrap();
+        let first = consolidate_slow(&lib, &index, &config, None, false).unwrap();
+        let second = consolidate_slow(&lib, &index, &config, None, false).unwrap();
         assert_eq!(first.merged.len(), second.merged.len());
         assert_eq!(first.promoted.len(), second.promoted.len());
         assert_eq!(first.demoted.len(), second.demoted.len());
@@ -661,10 +697,29 @@ mod tests {
         e.collections.push("demo/project".into());
         remember(&lib, &index, &e);
 
-        let report = consolidate_slow(&lib, &index, &config, None).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None, false).unwrap();
         assert!(report
             .collections_resummarized
             .contains(&"demo/project".to_string()));
         assert!(lib.root.join("collections/demo-project.md").exists());
+        assert!(lib.root.join("LIBRARY.md").exists());
+    }
+
+    #[test]
+    fn dry_run_does_not_write() {
+        let (_dir, lib, index, config) = setup();
+        let mut e = Engram::new("in collection", "body", Tier::Semantic, Status::Confirmed);
+        e.collections.push("demo".into());
+        remember(&lib, &index, &e);
+
+        let before = lib.read_engram(&lib.engram_path(&e).unwrap()).unwrap();
+        let report = consolidate_slow(&lib, &index, &config, None, true).unwrap();
+        assert!(report.dry_run);
+        assert!(!report.collections_resummarized.is_empty());
+
+        let after = lib.read_engram(&lib.engram_path(&e).unwrap()).unwrap();
+        assert_eq!(before.salience, after.salience);
+        assert!(!lib.root.join("collections/demo.md").exists());
+        assert!(!lib.root.join("LIBRARY.md").exists());
     }
 }

@@ -236,6 +236,7 @@ pub fn consolidate(state: &ServerState, params: ConsolidateParams) -> Result<Val
         &state.index,
         &state.config,
         completer.as_deref(),
+        false,
     )?;
     ServerState::to_json(&report)
 }

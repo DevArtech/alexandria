@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    archive, catalog, consolidate, coverage, expand, forget, init, link, map, meta, recall,
+    archive, catalog, consolidate, coverage, expand, forget, init, link, map, meta, pack, recall,
     reflect, reindex, remember, style, survey, threads, timeline, trace,
 };
 
@@ -84,7 +84,11 @@ enum Commands {
         rel: Option<String>,
     },
     /// List the collections and tags memory is organized by (with counts)
-    Catalog,
+    Catalog {
+        /// Regenerate LIBRARY.md at the library root
+        #[arg(long)]
+        write_overview: bool,
+    },
     /// Memory-density x-ray for a topic (counts, provenance, recency, detail ratio)
     Coverage { topic: String },
     /// Exhaustive-but-budgeted topic traversal (claims + body token costs)
@@ -130,7 +134,11 @@ enum Commands {
     /// Alias for archive — move to archive tier
     Forget { id: String },
     /// Slow-pass consolidation (dedupe, promote, decay, re-summarize)
-    Consolidate,
+    Consolidate {
+        /// Preview consolidation changes without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Slow reflection pass (same as consolidate in M3)
     Reflect {
         #[arg(long)]
@@ -162,6 +170,33 @@ enum Commands {
         /// Gap was warranted (not a false positive); default records as false positive
         #[arg(long)]
         gap_confirmed: bool,
+    },
+    /// Export or install portable memory packs
+    Pack {
+        #[command(subcommand)]
+        command: PackCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackCommands {
+    /// Export a curated, read-only snapshot pack from the library
+    Export {
+        /// Output directory for the pack (must be empty or not exist)
+        #[arg(long)]
+        target: PathBuf,
+        /// Human-readable pack name (defaults from selectors)
+        #[arg(long)]
+        name: Option<String>,
+        /// Include engrams in this collection (repeatable; union with tags)
+        #[arg(long)]
+        collection: Vec<String>,
+        /// Include engrams with this tag (repeatable; union with collections)
+        #[arg(long)]
+        tag: Vec<String>,
+        /// Include archived and superseded engrams
+        #[arg(long)]
+        include_archived: bool,
     },
 }
 
@@ -210,7 +245,9 @@ fn main() -> Result<()> {
             tag,
         ),
         Commands::Expand { id, rel } => expand::run(cli.library, cli.format, id, rel),
-        Commands::Catalog => catalog::run(cli.library, cli.format),
+        Commands::Catalog { write_overview } => {
+            catalog::run(cli.library, cli.format, write_overview)
+        }
         Commands::Coverage { topic } => coverage::run(cli.library, cli.format, topic),
         Commands::Survey {
             topic,
@@ -231,7 +268,7 @@ fn main() -> Result<()> {
         }
         Commands::Archive { id } => archive::run(cli.library, cli.format, id),
         Commands::Forget { id } => forget::run(cli.library, cli.format, id),
-        Commands::Consolidate => consolidate::run(cli.library, cli.format),
+        Commands::Consolidate { dry_run } => consolidate::run(cli.library, cli.format, dry_run),
         Commands::Reflect { fast } => reflect::run(cli.library, cli.format, fast),
         Commands::Threads { surface_for } => threads::run(cli.library, cli.format, surface_for),
         Commands::Style { profile } => style::run(cli.library, cli.format, profile),
@@ -252,5 +289,22 @@ fn main() -> Result<()> {
             gap_kind,
             gap_confirmed,
         }),
+        Commands::Pack { command } => match command {
+            PackCommands::Export {
+                target,
+                name,
+                collection,
+                tag,
+                include_archived,
+            } => pack::run_export(
+                cli.library,
+                cli.format,
+                target,
+                name,
+                collection,
+                tag,
+                include_archived,
+            ),
+        },
     }
 }

@@ -8,6 +8,7 @@ pub mod init;
 pub mod link;
 pub mod map;
 pub mod meta;
+pub mod pack;
 pub mod recall;
 pub mod reflect;
 pub mod reindex;

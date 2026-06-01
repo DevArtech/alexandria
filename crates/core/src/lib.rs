@@ -8,9 +8,11 @@ pub mod facets;
 pub mod freshness;
 pub mod graph;
 pub mod index;
+pub mod library_overview;
 pub mod map;
 pub mod meta;
 pub mod ops;
+pub mod pack;
 pub mod provider;
 pub mod retrieval;
 pub mod shape;
@@ -37,12 +39,16 @@ pub use index::{
     EngramRow, Index, ProvenanceStats, RecencyStats, ReindexResult, SemanticHit, SourceFreshness,
     StatusCounts,
 };
+pub use library_overview::{
+    regenerate_library_overview, LibraryOverviewReport, LIBRARY_OVERVIEW_FILENAME,
+};
 pub use map::{map, MapEdge, MapOptions, MapRelGroup, MapResult};
 pub use meta::{
     append_meta_event, load_meta_events, meta_report, rebuild_meta_index, record_correction,
     record_gap_outcome, record_promotion_reversal, MetaLogEvent, MetaReport,
 };
 pub use ops::{ArchiveResult, LinkResult, Ops};
+pub use pack::{export_pack, PackExportOptions, PackReport, PACK_VERSION};
 pub use provider::{
     build_completer, build_embedder, build_embedder_with_dim_hint, build_reranker, embed_sync,
     predict_embedder_id, Completer, Embedder, HashEmbedder, Prompt, Reranker,

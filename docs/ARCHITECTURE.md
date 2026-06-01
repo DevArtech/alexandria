@@ -637,8 +637,19 @@ my-library/
 - **Shape representation.** The LLM-written shape summary is the M4 default (Section 6.3.1); the open question is whether to invest in more abstract representations (state sequences, hypothesis/dead-end graph motifs) later.
 - **Posture judge calibration.** The rule thresholds in Section 10.1 are the most calibration-sensitive knobs in the system; they need a labeled evaluation harness and should eventually be self-calibrated per domain by meta-memory. **M5 ships bounded calibration only** (meta-memory down-weights fused scores in low-reliability domains); the full live per-domain threshold self-tuning loop is deferred.
 - **Salience decay function.** Linear vs. exponential half-life; per-tier (relational fastest); tuning the boost-on-access factor.
-- **Multi-library support.** Single active library for v1; cross-library `recall` is a later concern.
+- **Multi-library support.** Single active library for v1; cross-library `recall` is a later concern. Pack export (`alexandria pack export`) ships as read-only snapshots; `pack install` (mounting a pack as a read-only reference layer inside Alexandria) is deferred.
 - **Working-memory persistence.** Purely in-process per invocation, or a small session file? Leaning ephemeral per-process for v1.
+- **Interactive promotion review.** Should consolidation expose an interactive surface (`review`) where the user inspects pending promotions/demotions/merges and accepts, rejects, or edits each one? `consolidate --dry-run` previews the report without writing; a full review UX is deferred.
+- **Dual-model completer tier.** Consolidation currently uses one `Completer` for shape extraction and summarization. A fast/cheap model for per-engram extraction and a heavier model for cross-engram summarization may reduce cost; wire only if consolidation becomes cost-sensitive.
+
+### 16.1.1 Deliberate non-goals (Synto comparison guardrails)
+
+These ideas appear in comparable knowledge-compiler tools but are **explicitly rejected** for Alexandria:
+
+- **Concept extraction as the primary unit.** The atomic unit is the engram (a single claim with provenance), not a synthesized concept article spanning many sources.
+- **Untyped wiki-style auto-linking.** Typed edges (`supports`, `conflicts_confirmed`, `depends_on`, etc.) are strictly more expressive; untyped `[[concept]]` links would be a regression.
+- **Batch ingest as the dominant flow.** Memory arrives streaming during real interactions; consolidation is background maintenance, not a compile step over a dropped corpus.
+- **Pack as live memory.** Exported packs are point-in-time snapshots — frozen reference layers, not writable extensions of the living library.
 
 ### 16.2 Phased build roadmap
 
