@@ -1,5 +1,7 @@
 # Alexandria
 
+![Alexandria — agent-native memory substrate](Alexandria.png)
+
 > A local-first, CLI-first "second brain" designed for how an LLM actually thinks, retrieves, and reasons — not for how a human files paper notes.
 
 Named after the Library of Alexandria, this is a memory substrate built for an LLM consumer. Its prime directive is simple:
