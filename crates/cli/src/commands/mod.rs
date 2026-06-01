@@ -4,6 +4,8 @@ pub mod consolidate;
 pub mod coverage;
 pub mod expand;
 pub mod forget;
+pub mod graph;
+pub mod graph_tui;
 pub mod init;
 pub mod link;
 pub mod map;

@@ -1,6 +1,6 @@
 //! Relationship / concept graph surfacing via typed-edge traversal.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,11 +32,44 @@ pub struct MapRelGroup {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapResult {
     pub seed: String,
+    #[serde(default)]
+    pub seed_ids: Vec<String>,
     pub depth: u32,
     pub rel_groups: Vec<MapRelGroup>,
     pub mermaid: String,
     pub total_tokens: u32,
     pub edge_count: u32,
+}
+
+/// Resolved seed engram ids, inferring from edges when absent (older remote servers).
+pub fn effective_seed_ids(result: &MapResult) -> Vec<String> {
+    if !result.seed_ids.is_empty() {
+        return result.seed_ids.clone();
+    }
+
+    let min_depth = result
+        .rel_groups
+        .iter()
+        .flat_map(|g| g.edges.iter())
+        .map(|e| e.depth)
+        .min()
+        .unwrap_or(1);
+
+    let mut ids: Vec<String> = result
+        .rel_groups
+        .iter()
+        .flat_map(|g| g.edges.iter())
+        .filter(|e| e.depth == min_depth)
+        .map(|e| e.from_id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+
+    if ids.is_empty() && result.seed.starts_with("eng_") {
+        return vec![result.seed.clone()];
+    }
+
+    ids
 }
 
 pub struct MapOptions {
@@ -108,10 +141,22 @@ pub fn map(seed: &str, index: &Index, config: &Config, options: MapOptions) -> R
 
     let (rel_groups, total_tokens) = budget_trim_edges(edges, budget);
     let edge_count = rel_groups.iter().map(|g| g.edges.len() as u32).sum();
-    let mermaid = render_mermaid(&seed_ids, &rel_groups);
+    let mermaid = crate::render::render_map_mermaid(
+        &MapResult {
+            seed: seed.to_string(),
+            seed_ids: seed_ids.clone(),
+            depth,
+            rel_groups: rel_groups.clone(),
+            mermaid: String::new(),
+            total_tokens,
+            edge_count,
+        },
+        &seed_ids,
+    );
 
     Ok(MapResult {
         seed: seed.to_string(),
+        seed_ids,
         depth,
         rel_groups,
         mermaid,
@@ -178,32 +223,6 @@ fn budget_trim_edges(edges: Vec<MapEdge>, budget: u32) -> (Vec<MapRelGroup>, u32
     (groups, total)
 }
 
-fn render_mermaid(seed_ids: &[String], groups: &[MapRelGroup]) -> String {
-    let mut lines = vec!["flowchart LR".to_string()];
-    let mut nodes: HashSet<String> = seed_ids.iter().cloned().collect();
-
-    for group in groups {
-        for edge in &group.edges {
-            nodes.insert(edge.from_id.clone());
-            nodes.insert(edge.to_id.clone());
-        }
-    }
-
-    for id in &nodes {
-        let label = id.replace('_', " ");
-        lines.push(format!("  {id}[\"{label}\"]"));
-    }
-
-    for group in groups {
-        for edge in &group.edges {
-            let rel = edge.rel.replace('_', " ");
-            lines.push(format!("  {} -->|{}| {}", edge.from_id, rel, edge.to_id));
-        }
-    }
-
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,16 +234,26 @@ mod tests {
             token_cost: 10,
             edges: vec![MapEdge {
                 from_id: "eng_a".to_string(),
-                from_claim: "A".to_string(),
+                from_claim: "A claim".to_string(),
                 rel: "supports".to_string(),
                 to_id: "eng_b".to_string(),
-                to_claim: "B".to_string(),
+                to_claim: "B claim".to_string(),
                 depth: 1,
                 token_cost: 5,
             }],
         }];
-        let m = render_mermaid(&["eng_a".to_string()], &groups);
+        let result = MapResult {
+            seed: "topic".into(),
+            seed_ids: vec!["eng_a".into()],
+            depth: 2,
+            rel_groups: groups,
+            mermaid: String::new(),
+            total_tokens: 10,
+            edge_count: 1,
+        };
+        let m = crate::render::render_map_mermaid(&result, &result.seed_ids);
         assert!(m.contains("flowchart LR"));
         assert!(m.contains("supports"));
+        assert!(m.contains("A claim"));
     }
 }

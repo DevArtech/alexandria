@@ -1,18 +1,18 @@
 use std::path::PathBuf;
 
 use alexandria_core::{
-    build_completer, catalog as build_catalog, consolidate_fast, consolidate_slow,
-    coverage as build_coverage, list_threads, map as build_map, meta_report, rebuild_meta_index,
-    record_correction, record_gap_outcome, style_profile, survey as build_survey, Config, Engram,
-    Graph, Index, Library, MapOptions, Ops, RecallOptions, Rel, Retrieval, Source, Status,
-    SurveyOptions, Tier,
+    build_completer, build_graph_view, catalog as build_catalog, consolidate_fast,
+    consolidate_slow, coverage as build_coverage, list_threads, map as build_map, meta_report,
+    rebuild_meta_index, record_correction, record_gap_outcome, style_profile,
+    survey as build_survey, Config, Engram, Graph, GraphScope, GraphViewOptions, Index, Library,
+    MapOptions, Ops, RecallOptions, Rel, Retrieval, Source, Status, SurveyOptions, Tier,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 
 use crate::params::{
-    ConsolidateParams, CoverageParams, ExpandParams, IdParams, LinkParams, MapParams, MetaParams,
-    RecallParams, RememberParams, SurveyParams, ThreadsParams, TimelineParams,
+    ConsolidateParams, CoverageParams, ExpandParams, GraphParams, IdParams, LinkParams, MapParams,
+    MetaParams, RecallParams, RememberParams, SurveyParams, ThreadsParams, TimelineParams,
 };
 
 pub struct ServerState {
@@ -100,6 +100,42 @@ pub fn map(state: &ServerState, params: MapParams) -> Result<Value> {
             depth: params.depth.unwrap_or(2),
             rels: parsed_rels,
             budget: params.budget,
+        },
+    )?;
+    ServerState::to_json(&result)
+}
+
+pub fn graph(state: &ServerState, params: GraphParams) -> Result<Value> {
+    let scope = match params.scope.as_str() {
+        "global" => GraphScope::Global,
+        "seed" => GraphScope::Seed,
+        "provenance" => GraphScope::Provenance,
+        other => bail!("unknown graph scope: {other}"),
+    };
+    if matches!(scope, GraphScope::Seed | GraphScope::Provenance) && params.seed.is_none() {
+        bail!("seed is required for seed and provenance scopes");
+    }
+    let parsed_rels = if params.rel.is_empty() {
+        None
+    } else {
+        Some(
+            params
+                .rel
+                .iter()
+                .map(|r| Rel::parse(r))
+                .collect::<Result<Vec<Rel>, _>>()?,
+        )
+    };
+    let result = build_graph_view(
+        &state.index,
+        &state.config,
+        GraphViewOptions {
+            scope,
+            seed: params.seed,
+            depth: params.depth.unwrap_or(2),
+            rels: parsed_rels,
+            max_nodes: params.max_nodes,
+            overlay_facets: params.overlay_facets,
         },
     )?;
     ServerState::to_json(&result)

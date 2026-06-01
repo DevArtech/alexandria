@@ -10,7 +10,7 @@ use anyhow::{bail, Result};
 use serde_json::json;
 
 use crate::commands::{
-    catalog, consolidate, coverage, expand, map, recall, remember, survey, trace,
+    catalog, consolidate, coverage, expand, graph, map, recall, remember, survey, trace,
 };
 use crate::OutputFormat;
 
@@ -141,14 +141,63 @@ pub fn map(
     depth: Option<u32>,
     rel: Vec<String>,
     budget: Option<u32>,
+    view: map::MapView,
 ) -> Result<()> {
-    emit_typed(
+    let value: alexandria_core::MapResult = call_and_parse(
         remote,
         "map",
         json!({ "seed": seed, "depth": depth, "rel": rel, "budget": budget }),
-        format,
-        map::print_human,
-    )
+    )?;
+    match format {
+        OutputFormat::Human => map::print_human(&value, view),
+        OutputFormat::Json => emit_json(&value)?,
+    }
+    Ok(())
+}
+
+pub struct GraphRemoteArgs {
+    pub seed: Option<String>,
+    pub scope: graph::GraphScopeArg,
+    pub view: graph::GraphViewArg,
+    pub depth: Option<u32>,
+    pub rel: Vec<String>,
+    pub max_nodes: usize,
+    pub overlay_facets: bool,
+}
+
+pub fn graph(remote: &ResolvedRemote, format: OutputFormat, args: GraphRemoteArgs) -> Result<()> {
+    if matches!(
+        args.scope,
+        graph::GraphScopeArg::Seed | graph::GraphScopeArg::Provenance
+    ) && args.seed.is_none()
+    {
+        bail!("--seed is required for seed and provenance scopes");
+    }
+    let value: alexandria_core::GraphView = call_and_parse(
+        remote,
+        "graph",
+        json!({
+            "seed": args.seed,
+            "scope": scope_to_str(args.scope),
+            "depth": args.depth,
+            "rel": args.rel,
+            "max_nodes": args.max_nodes,
+            "overlay_facets": args.overlay_facets,
+        }),
+    )?;
+    match format {
+        OutputFormat::Human => graph::print_human(&value, args.view),
+        OutputFormat::Json => emit_json(&value)?,
+    }
+    Ok(())
+}
+
+fn scope_to_str(scope: graph::GraphScopeArg) -> &'static str {
+    match scope {
+        graph::GraphScopeArg::Global => "global",
+        graph::GraphScopeArg::Seed => "seed",
+        graph::GraphScopeArg::Provenance => "provenance",
+    }
 }
 
 pub fn expand(

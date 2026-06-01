@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::handlers::{
-    archive, catalog, consolidate, coverage, expand, link, map, meta, recall, remember, style,
-    survey, threads, timeline, trace, ServerState,
+    archive, catalog, consolidate, coverage, expand, graph, link, map, meta, recall, remember,
+    style, survey, threads, timeline, trace, ServerState,
 };
 use crate::params::{
-    ConsolidateParams, CoverageParams, ExpandParams, IdParams, LinkParams, MapParams, MetaParams,
-    RecallParams, RememberParams, SurveyParams, ThreadsParams, TimelineParams,
+    ConsolidateParams, CoverageParams, ExpandParams, GraphParams, IdParams, LinkParams, MapParams,
+    MetaParams, RecallParams, RememberParams, SurveyParams, ThreadsParams, TimelineParams,
 };
 use anyhow::Result;
 use rmcp::{
@@ -109,6 +109,16 @@ impl AlexandriaMcpServer {
         Parameters(params): Parameters<MapParams>,
     ) -> Result<CallToolResult, McpError> {
         self.run_read(|state| map(state, params)).await
+    }
+
+    #[tool(
+        description = "Visualize the knowledge graph: seeded typed-edge traversal, global edge dump, or provenance DAG. Returns nodes and edges for ASCII/Mermaid/DOT rendering."
+    )]
+    async fn graph(
+        &self,
+        Parameters(params): Parameters<GraphParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.run_read(|state| graph(state, params)).await
     }
 
     #[tool(
