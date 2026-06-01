@@ -1,11 +1,11 @@
 use rusqlite::params;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engram::{Engram, Rel, Tier};
 use crate::error::{AlexandriaError, Result};
 use crate::index::Index;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceNode {
     pub id: String,
     pub claim: String,
@@ -21,7 +21,7 @@ pub struct TraceNode {
     pub age_days: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceResult {
     pub id: String,
     pub claim: String,
@@ -31,7 +31,7 @@ pub struct TraceResult {
     pub nodes: Vec<TraceNode>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineEntry {
     pub id: String,
     pub claim: String,
@@ -43,7 +43,7 @@ pub struct TimelineEntry {
     pub salience: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineResult {
     pub entries: Vec<TimelineEntry>,
     pub count: usize,

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use chrono::{Duration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, ConsolidationConfig};
 use crate::engram::{Engram, Link, Rel, Status, Tier};
@@ -17,7 +17,7 @@ use crate::provider::Completer;
 use crate::shape::extract_shape_summary;
 use crate::store::Library;
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConsolidationReport {
     pub merged: Vec<String>,
     pub promoted: Vec<String>,
@@ -32,7 +32,7 @@ pub struct ConsolidationReport {
     pub library_overview_written: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FastReflectionReport {
     pub briefing_path: String,
     pub engrams_summarized: usize,

@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::engram::{Engram, Tier};
@@ -14,7 +14,7 @@ use crate::graph::Graph;
 use crate::index::Index;
 use crate::retrieval::{escape_fts_query, RecallOptions, RecallState, ResponseMode, Retrieval};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SurveyHit {
     pub id: String,
     pub claim: String,
@@ -28,7 +28,7 @@ pub struct SurveyHit {
     pub freshness_warning: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SurveyCollection {
     pub name: String,
     pub summary: String,
@@ -36,7 +36,7 @@ pub struct SurveyCollection {
     pub hits: Vec<SurveyHit>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SurveyGap {
     pub facet_kind: String,
     pub facet_name: String,
@@ -44,7 +44,7 @@ pub struct SurveyGap {
     pub note: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SurveyResult {
     pub topic: String,
     pub state: RecallState,

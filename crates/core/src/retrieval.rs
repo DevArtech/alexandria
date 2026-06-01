@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::params;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, ThresholdsConfig};
 use crate::engram::{Engram, Rel, Tier};
@@ -36,7 +36,7 @@ struct PostureInputs {
     meta_reliability_weak: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecallState {
     StrongHit,
@@ -58,7 +58,7 @@ impl RecallState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseMode {
     Flow,
@@ -76,7 +76,7 @@ impl ResponseMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallHit {
     pub id: String,
     pub claim: String,
@@ -91,7 +91,7 @@ pub struct RecallHit {
     pub freshness_warning: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionNode {
     pub name: String,
     pub summary: String,
@@ -99,12 +99,12 @@ pub struct CollectionNode {
     pub hits: Vec<RecallHit>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextTree {
     pub collections: Vec<CollectionNode>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallResult {
     pub state: RecallState,
     pub response_mode: ResponseMode,
@@ -115,14 +115,14 @@ pub struct RecallResult {
     pub detected_facets: Vec<DetectedFacet>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkClaim {
     pub rel: String,
     pub to_id: String,
     pub claim: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpandResult {
     pub id: String,
     pub claim: String,

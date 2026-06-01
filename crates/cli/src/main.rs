@@ -1,4 +1,5 @@
 mod commands;
+mod remote;
 
 use std::path::PathBuf;
 
@@ -8,6 +9,7 @@ use commands::{
     archive, catalog, consolidate, coverage, expand, forget, init, link, map, meta, pack, recall,
     reflect, reindex, remember, style, survey, threads, timeline, trace,
 };
+use remote::{dispatch, guard_local_only, manage, resolve_remote};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
@@ -21,6 +23,18 @@ struct Cli {
     /// Path to library root (defaults to discovering .alexandria/ from cwd)
     #[arg(long, global = true)]
     library: Option<PathBuf>,
+
+    /// Remote MCP server: profile name or full base URL (overrides config default)
+    #[arg(long, global = true)]
+    remote: Option<String>,
+
+    /// Force local library for this command (overrides config default remote)
+    #[arg(long, global = true, conflicts_with = "remote")]
+    local: bool,
+
+    /// Env var holding the bearer token for --remote (default: ALEXANDRIA_MCP_TOKEN)
+    #[arg(long, global = true)]
+    token_env: Option<String>,
 
     #[arg(long, global = true, value_enum, default_value = "human")]
     format: OutputFormat,
@@ -171,10 +185,42 @@ enum Commands {
         #[arg(long)]
         gap_confirmed: bool,
     },
+    /// Manage remote MCP server profiles (~/.config/alexandria/remote.toml)
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommands,
+    },
     /// Export or install portable memory packs
     Pack {
         #[command(subcommand)]
         command: PackCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteCommands {
+    /// Add or update a named remote profile
+    Add {
+        /// Profile name (e.g. prod, local)
+        name: String,
+        /// Server base URL (https://memory.example.com or http://127.0.0.1:8080)
+        #[arg(long)]
+        url: String,
+        /// Env var holding the bearer token
+        #[arg(long)]
+        token_env: Option<String>,
+        /// Set as the default profile
+        #[arg(long)]
+        default: bool,
+    },
+    /// List configured remote profiles
+    List,
+    /// Remove a remote profile
+    Remove { name: String },
+    /// Set the default target: profile name or `local` for on-disk library
+    Use {
+        /// Profile name, or `local` to use the library on disk by default
+        name: String,
     },
 }
 
@@ -202,8 +248,22 @@ enum PackCommands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if matches!(cli.command, Commands::Remote { .. }) {
+        return run_remote_command(cli.format, cli.command);
+    }
+
+    let remote = if cli.local {
+        None
+    } else {
+        resolve_remote(cli.remote.as_deref(), cli.token_env.as_deref())?
+    };
+
     match cli.command {
-        Commands::Init { path } => init::run(path, cli.format),
+        Commands::Init { path } => {
+            guard_local_only(remote.as_ref(), "init")?;
+            init::run(path, cli.format)
+        }
         Commands::Remember {
             text,
             tier,
@@ -214,19 +274,26 @@ fn main() -> Result<()> {
             derived_from,
             surface_when,
             observed,
-        } => remember::run(remember::RememberOptions {
-            library_path: cli.library,
-            format: cli.format,
-            text,
-            tier,
-            status,
-            collections: collection,
-            tags: tag,
-            sources: source,
-            derived_from,
-            surface_when,
-            observed,
-        }),
+        } => {
+            let opts = remember::RememberOptions {
+                library_path: cli.library,
+                format: cli.format,
+                text,
+                tier,
+                status,
+                collections: collection,
+                tags: tag,
+                sources: source,
+                derived_from,
+                surface_when,
+                observed,
+            };
+            if let Some(r) = remote.as_ref() {
+                dispatch::remember(r, cli.format, opts)
+            } else {
+                remember::run(opts)
+            }
+        }
         Commands::Recall {
             query,
             budget,
@@ -234,44 +301,144 @@ fn main() -> Result<()> {
             high_stakes,
             collection,
             tag,
-        } => recall::run(
-            cli.library,
-            cli.format,
-            query,
-            budget,
-            audit,
-            high_stakes,
-            collection,
-            tag,
-        ),
-        Commands::Expand { id, rel } => expand::run(cli.library, cli.format, id, rel),
-        Commands::Catalog { write_overview } => {
-            catalog::run(cli.library, cli.format, write_overview)
+        } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::recall(
+                    r,
+                    cli.format,
+                    dispatch::RecallRemoteArgs {
+                        query,
+                        budget,
+                        audit,
+                        high_stakes,
+                        collections: collection,
+                        tags: tag,
+                    },
+                )
+            } else {
+                recall::run(
+                    cli.library,
+                    cli.format,
+                    query,
+                    budget,
+                    audit,
+                    high_stakes,
+                    collection,
+                    tag,
+                )
+            }
         }
-        Commands::Coverage { topic } => coverage::run(cli.library, cli.format, topic),
+        Commands::Expand { id, rel } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::expand(r, cli.format, id, rel)
+            } else {
+                expand::run(cli.library, cli.format, id, rel)
+            }
+        }
+        Commands::Catalog { write_overview } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::catalog(r, cli.format, write_overview)
+            } else {
+                catalog::run(cli.library, cli.format, write_overview)
+            }
+        }
+        Commands::Coverage { topic } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::coverage(r, cli.format, topic)
+            } else {
+                coverage::run(cli.library, cli.format, topic)
+            }
+        }
         Commands::Survey {
             topic,
             budget,
             depth,
-        } => survey::run(cli.library, cli.format, topic, budget, depth),
+        } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::survey(r, cli.format, topic, budget, depth)
+            } else {
+                survey::run(cli.library, cli.format, topic, budget, depth)
+            }
+        }
         Commands::Map {
             seed,
             depth,
             rel,
             budget,
-        } => map::run(cli.library, cli.format, seed, depth, rel, budget),
-        Commands::Reindex => reindex::run(cli.library, cli.format),
-        Commands::Link { from, rel, to } => link::run(cli.library, cli.format, from, rel, to),
-        Commands::Trace { id } => trace::run(cli.library, cli.format, id),
-        Commands::Timeline { since, until, tier } => {
-            timeline::run(cli.library, cli.format, since, until, tier)
+        } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::map(r, cli.format, seed, depth, rel, budget)
+            } else {
+                map::run(cli.library, cli.format, seed, depth, rel, budget)
+            }
         }
-        Commands::Archive { id } => archive::run(cli.library, cli.format, id),
-        Commands::Forget { id } => forget::run(cli.library, cli.format, id),
-        Commands::Consolidate { dry_run } => consolidate::run(cli.library, cli.format, dry_run),
-        Commands::Reflect { fast } => reflect::run(cli.library, cli.format, fast),
-        Commands::Threads { surface_for } => threads::run(cli.library, cli.format, surface_for),
-        Commands::Style { profile } => style::run(cli.library, cli.format, profile),
+        Commands::Reindex => {
+            guard_local_only(remote.as_ref(), "reindex")?;
+            reindex::run(cli.library, cli.format)
+        }
+        Commands::Link { from, rel, to } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::link(r, cli.format, from, rel, to)
+            } else {
+                link::run(cli.library, cli.format, from, rel, to)
+            }
+        }
+        Commands::Trace { id } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::trace(r, cli.format, id)
+            } else {
+                trace::run(cli.library, cli.format, id)
+            }
+        }
+        Commands::Timeline { since, until, tier } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::timeline(r, cli.format, since, until, tier)
+            } else {
+                timeline::run(cli.library, cli.format, since, until, tier)
+            }
+        }
+        Commands::Archive { id } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::archive(r, cli.format, id)
+            } else {
+                archive::run(cli.library, cli.format, id)
+            }
+        }
+        Commands::Forget { id } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::archive(r, cli.format, id)
+            } else {
+                forget::run(cli.library, cli.format, id)
+            }
+        }
+        Commands::Consolidate { dry_run } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::consolidate(r, cli.format, dry_run)
+            } else {
+                consolidate::run(cli.library, cli.format, dry_run)
+            }
+        }
+        Commands::Reflect { fast } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::reflect(r, cli.format, fast)
+            } else {
+                reflect::run(cli.library, cli.format, fast)
+            }
+        }
+        Commands::Threads { surface_for } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::threads(r, cli.format, surface_for)
+            } else {
+                threads::run(cli.library, cli.format, surface_for)
+            }
+        }
+        Commands::Style { profile } => {
+            if let Some(r) = remote.as_ref() {
+                dispatch::style(r, cli.format, profile)
+            } else {
+                style::run(cli.library, cli.format, profile)
+            }
+        }
         Commands::Meta {
             domain,
             record_correction,
@@ -279,32 +446,60 @@ fn main() -> Result<()> {
             record_gap,
             gap_kind,
             gap_confirmed,
-        } => meta::run(meta::MetaOptions {
-            library_path: cli.library,
-            format: cli.format,
-            domain,
-            record_correction,
-            correction_domain,
-            record_gap,
-            gap_kind,
-            gap_confirmed,
-        }),
-        Commands::Pack { command } => match command {
-            PackCommands::Export {
-                target,
-                name,
-                collection,
-                tag,
-                include_archived,
-            } => pack::run_export(
-                cli.library,
-                cli.format,
-                target,
-                name,
-                collection,
-                tag,
-                include_archived,
-            ),
-        },
+        } => {
+            let opts = meta::MetaOptions {
+                library_path: cli.library,
+                format: cli.format,
+                domain,
+                record_correction,
+                correction_domain,
+                record_gap,
+                gap_kind,
+                gap_confirmed,
+            };
+            if let Some(r) = remote.as_ref() {
+                dispatch::meta(r, cli.format, opts)
+            } else {
+                meta::run(opts)
+            }
+        }
+        Commands::Remote { .. } => unreachable!(),
+        Commands::Pack { command } => {
+            guard_local_only(remote.as_ref(), "pack")?;
+            match command {
+                PackCommands::Export {
+                    target,
+                    name,
+                    collection,
+                    tag,
+                    include_archived,
+                } => pack::run_export(
+                    cli.library,
+                    cli.format,
+                    target,
+                    name,
+                    collection,
+                    tag,
+                    include_archived,
+                ),
+            }
+        }
+    }
+}
+
+fn run_remote_command(format: OutputFormat, command: Commands) -> Result<()> {
+    let Commands::Remote { command } = command else {
+        unreachable!();
+    };
+    match command {
+        RemoteCommands::Add {
+            name,
+            url,
+            token_env,
+            default,
+        } => manage::add(name, url, token_env, default, format),
+        RemoteCommands::List => manage::list(format),
+        RemoteCommands::Remove { name } => manage::remove(name, format),
+        RemoteCommands::Use { name } => manage::set_default(name, format),
     }
 }

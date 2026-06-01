@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engram::{Engram, Tier};
 use crate::error::Result;
@@ -6,7 +6,7 @@ use crate::provider::Completer;
 use crate::store::Library;
 
 /// Structured generation parameters — never quotable relational bodies (§2.4).
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StyleProfile {
     pub verbosity: f64,
     pub directness: f64,
@@ -16,7 +16,7 @@ pub struct StyleProfile {
     pub evidence_summary: Option<RelationalEvidenceSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RelationalEvidenceSummary {
     pub projects: u32,
     pub task_types: u32,

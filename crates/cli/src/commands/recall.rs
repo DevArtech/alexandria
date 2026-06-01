@@ -43,7 +43,7 @@ pub fn run(
     Ok(())
 }
 
-fn print_human(result: &alexandria_core::RecallResult) {
+pub fn print_human(result: &alexandria_core::RecallResult) {
     println!("state: {}", result.state.as_str());
     println!("response_mode: {}", result.response_mode.as_str());
     println!("total_tokens: {}", result.total_tokens);

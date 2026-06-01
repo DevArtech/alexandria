@@ -259,7 +259,76 @@ clients; keys are auto-generated on first start.
 
 ---
 
-## 5. Tools exposed
+## 5. Drive the CLI against a remote server
+
+The `alexandria` binary can target a remote `alexandria-mcp` HTTP endpoint (via the
+OAuth proxy or directly) instead of opening a local library. It speaks the same MCP
+tool protocol as Codex/Cursor agents: Streamable HTTP at `<base-url>/mcp` with a
+static bearer token.
+
+### Configure a profile
+
+Profiles are stored in `~/.config/alexandria/remote.toml` (macOS/Linux) or the
+platform equivalent under your user config directory.
+
+```bash
+# Point at your public proxy (recommended) or raw alexandria-mcp on localhost
+alexandria remote add prod --url https://memory.example.com --default
+export ALEXANDRIA_MCP_TOKEN="<same token your proxy accepts for legacy bearer>"
+
+# Or a local HTTP server during development
+alexandria remote add local --url http://127.0.0.1:8080
+export ALEXANDRIA_MCP_TOKEN="<token passed to alexandria-mcp>"
+```
+
+Manage profiles and the **default target** (`local` vs a remote profile):
+
+```bash
+alexandria remote list
+alexandria remote use prod          # default → remote prod (no --remote flag needed)
+alexandria remote use local         # default → local library on disk
+alexandria remote remove staging
+```
+
+The config file stores `default = "local"` or `default = "prod"`. **Local is the
+normal default** until you run `remote use <profile>` or `remote add … --default`.
+
+Resolution order for each command: `--local` (force disk) → `--remote <profile-or-url>`
+→ `ALEXANDRIA_REMOTE` env → `default` in `remote.toml` → local library.
+
+Override the token env var per invocation with `--token-env MY_OTHER_TOKEN`.
+
+### Run memory verbs remotely
+
+Once `remote use prod` is set (or `remote add prod --default`), plain commands hit the
+server automatically:
+
+```bash
+alexandria recall "hybrid retrieval"
+alexandria remember "User prefers terse answers" --tier relational
+alexandria catalog
+```
+
+One-off overrides:
+
+```bash
+alexandria --remote prod recall "…"   # explicit profile (even if default differs)
+alexandria --local recall "…"         # force local library this invocation
+```
+
+`--format json` works the same as locally.
+
+### Local-only commands
+
+These touch files or the index on disk and **refuse** to run when a remote target is
+configured: `init`, `reindex`, `pack`, and `catalog --write-overview`. Run them on the
+server host (or SSH) against the library directory there.
+
+`consolidate --dry-run` is not supported remotely (the server has no dry-run tool).
+
+---
+
+## 6. Tools exposed
 
 `recall`, `expand`, `remember`, `link`, `trace`, `timeline`, `threads`, `style`,
 `meta`, `archive`, `consolidate` — identical to the CLI verbs and the stdio
@@ -268,7 +337,7 @@ regardless of transport.
 
 ---
 
-## 6. Operating notes
+## 7. Operating notes
 
 - **Backups**: the source of truth is the plain-text `library/` (and `meta_log/`).
   Back it up (or `git` it). `index.db` is a rebuildable cache (`alexandria reindex`).
@@ -284,7 +353,7 @@ regardless of transport.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |

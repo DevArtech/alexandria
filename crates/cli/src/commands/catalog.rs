@@ -34,19 +34,30 @@ pub fn run(
         return Ok(());
     }
 
+    format_catalog(&cat, format)
+}
+
+pub fn format_catalog(cat: &alexandria_core::Catalog, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Human => {
-            println!("total_engrams: {}", cat.total_engrams);
-            println!("collections ({}):", cat.collections.len());
-            for c in &cat.collections {
-                println!("  {} ({})", c.name, c.count);
-            }
-            println!("tags ({}):", cat.tags.len());
-            for t in &cat.tags {
-                println!("  {} ({})", t.name, t.count);
-            }
+            print_human(cat);
+            Ok(())
         }
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&cat)?),
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(cat)?);
+            Ok(())
+        }
     }
-    Ok(())
+}
+
+pub fn print_human(cat: &alexandria_core::Catalog) {
+    println!("total_engrams: {}", cat.total_engrams);
+    println!("collections ({}):", cat.collections.len());
+    for c in &cat.collections {
+        println!("  {} ({})", c.name, c.count);
+    }
+    println!("tags ({}):", cat.tags.len());
+    for t in &cat.tags {
+        println!("  {} ({})", t.name, t.count);
+    }
 }

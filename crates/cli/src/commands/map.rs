@@ -49,7 +49,7 @@ pub fn run(
     Ok(())
 }
 
-fn print_human(result: &alexandria_core::MapResult) {
+pub fn print_human(result: &alexandria_core::MapResult) {
     println!("seed: {}", result.seed);
     println!("depth: {}", result.depth);
     println!("edge_count: {}", result.edge_count);

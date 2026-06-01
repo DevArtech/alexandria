@@ -31,7 +31,7 @@ pub fn run(
     Ok(())
 }
 
-fn print_human(result: &alexandria_core::ExpandResult) {
+pub fn print_human(result: &alexandria_core::ExpandResult) {
     println!("[{}] {}", result.id, result.claim);
     println!("tier: {}", result.tier);
     println!("status: {}", result.status);

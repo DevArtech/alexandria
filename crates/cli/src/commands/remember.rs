@@ -100,6 +100,30 @@ pub fn run(opts: RememberOptions) -> Result<()> {
     Ok(())
 }
 
+pub fn print_remote_human(value: &serde_json::Value) -> Result<()> {
+    let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+    let claim = value.get("claim").and_then(|v| v.as_str()).unwrap_or("");
+    println!("Remembered {} ({})", id, claim);
+    if let Some(tier) = value.get("tier").and_then(|v| v.as_str()) {
+        println!("  tier: {tier}");
+    }
+    if let Some(path) = value.get("path").and_then(|v| v.as_str()) {
+        println!("  path: {path}");
+    }
+    if let Some(n) = value.get("sources").and_then(|v| v.as_array()) {
+        if !n.is_empty() {
+            println!("  sources: {}", n.len());
+        }
+    }
+    if let Some(triggers) = value.get("surface_when").and_then(|v| v.as_array()) {
+        if !triggers.is_empty() {
+            let joined: Vec<_> = triggers.iter().filter_map(|t| t.as_str()).collect();
+            println!("  surface_when: {}", joined.join(", "));
+        }
+    }
+    Ok(())
+}
+
 fn tier_label(tier: Tier) -> &'static str {
     match tier {
         Tier::Working => "working",

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::engram::Rel;
@@ -11,7 +11,7 @@ use crate::graph::Graph;
 use crate::index::Index;
 use crate::retrieval::{RecallOptions, Retrieval};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapEdge {
     pub from_id: String,
     pub from_claim: String,
@@ -22,14 +22,14 @@ pub struct MapEdge {
     pub token_cost: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapRelGroup {
     pub rel: String,
     pub edges: Vec<MapEdge>,
     pub token_cost: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapResult {
     pub seed: String,
     pub depth: u32,

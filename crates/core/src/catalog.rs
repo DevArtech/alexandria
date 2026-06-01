@@ -2,18 +2,18 @@
 //! organized by, with counts. Lets an agent orient itself and scope retrieval to
 //! the right facets for any domain instead of relying on fuzzy matching alone.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::index::Index;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FacetCount {
     pub name: String,
     pub count: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Catalog {
     pub total_engrams: usize,
     pub collections: Vec<FacetCount>,

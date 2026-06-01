@@ -181,6 +181,8 @@ Put TLS in front of `:8081` (Caddy, nginx, Cloudflare Tunnel, …). Only the pro
 
 Full deployment guide (embedder choice, per-client config, verification, operating notes): **[docs/REMOTE.md](docs/REMOTE.md)**. Proxy internals and env reference: **[proxy/README.md](proxy/README.md)**.
 
+**CLI against remote memory:** `alexandria remote add prod --url https://memory.example.com --default` (or `remote use prod`), export the bearer token, then run `alexandria recall "…"` — no `--remote` flag needed while prod is the default. Use `alexandria remote use local` to switch back. See [docs/REMOTE.md](docs/REMOTE.md#5-drive-the-cli-against-a-remote-server).
+
 ## Configuration
 
 `.alexandria/config.toml` is created on `init`:

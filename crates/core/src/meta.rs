@@ -30,7 +30,7 @@ pub enum MetaLogEvent {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetaReport {
     pub domain: Option<String>,
     pub reliability: f64,

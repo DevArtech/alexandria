@@ -35,7 +35,7 @@ pub fn run(
     Ok(())
 }
 
-fn print_human(result: &alexandria_core::SurveyResult) {
+pub fn print_human(result: &alexandria_core::SurveyResult) {
     println!("topic: {}", result.topic);
     println!("state: {}", result.state.as_str());
     println!("response_mode: {}", result.response_mode.as_str());

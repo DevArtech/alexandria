@@ -1,6 +1,6 @@
 //! Memory-density diagnostics for a topic: an x-ray of how much the library knows.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::error::Result;
@@ -8,7 +8,7 @@ use crate::facets::{detect_facets, dominant_facet, facets_to_filters, DetectedFa
 use crate::index::Index;
 use crate::retrieval::escape_fts_query;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecommendedNext {
     Nothing,
@@ -28,7 +28,7 @@ impl RecommendedNext {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecencyRange {
     pub oldest_updated: Option<String>,
     pub newest_updated: Option<String>,
@@ -36,7 +36,7 @@ pub struct RecencyRange {
     pub newest_touched: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvenanceDepth {
     pub total_sources: u32,
     pub first_party_sources: u32,
@@ -44,7 +44,7 @@ pub struct ProvenanceDepth {
     pub engrams_with_sources: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverageReport {
     pub topic: String,
     pub detected_facets: Vec<DetectedFacet>,

@@ -1,14 +1,14 @@
 use std::path::Path;
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engram::{Engram, Link, Rel, Status};
 use crate::error::{AlexandriaError, Result};
 use crate::index::Index;
 use crate::store::Library;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkResult {
     pub from_id: String,
     pub rel: String,
@@ -17,7 +17,7 @@ pub struct LinkResult {
     pub target_superseded: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveResult {
     pub id: String,
     pub claim: String,

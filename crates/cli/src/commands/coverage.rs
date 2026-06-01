@@ -21,7 +21,7 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat, topic: String) -
     Ok(())
 }
 
-fn print_human(report: &alexandria_core::CoverageReport) {
+pub fn print_human(report: &alexandria_core::CoverageReport) {
     println!("topic: {}", report.topic);
     if !report.detected_facets.is_empty() {
         println!("detected_facets:");

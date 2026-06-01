@@ -21,7 +21,7 @@ pub fn run(library_path: Option<PathBuf>, format: OutputFormat, id: String) -> R
     Ok(())
 }
 
-fn print_human(result: &alexandria_core::TraceResult) {
+pub fn print_human(result: &alexandria_core::TraceResult) {
     println!("[{}] {}", result.id, result.claim);
     println!(
         "confidence: {:.2} (effective: {:.2})",

@@ -3,19 +3,19 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::index::Index;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FacetKind {
     Collection,
     Tag,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DetectedFacet {
     pub kind: FacetKind,
     pub name: String,

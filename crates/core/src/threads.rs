@@ -1,12 +1,12 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engram::Status;
 use crate::error::Result;
 use crate::index::Index;
 use crate::store::Library;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadEntry {
     pub id: String,
     pub claim: String,
@@ -15,7 +15,7 @@ pub struct ThreadEntry {
     pub dormant_days: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadsResult {
     pub threads: Vec<ThreadEntry>,
     pub surface_for: Option<String>,
