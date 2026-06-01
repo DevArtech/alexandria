@@ -54,7 +54,7 @@ pub fn list_threads(
         }
     }
 
-    threads.sort_by(|a, b| b.last_touched.cmp(&a.last_touched));
+    threads.sort_by_key(|thread| std::cmp::Reverse(thread.last_touched));
 
     Ok(ThreadsResult {
         threads,

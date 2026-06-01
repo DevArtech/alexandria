@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Check release version
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.version.outputs.should_release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Determine Cargo release tag
+        id: version
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "alexandria") | .version' | head -n 1)"
+
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Could not determine Cargo package version for alexandria" >&2
+            exit 1
+          fi
+
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Release tag ${tag} already exists; skipping publish."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release tag ${tag} does not exist; publishing after build."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build release binaries
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --workspace --release --locked
+
+      - name: Package release archive
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          package="alexandria-${TAG}-linux-x86_64"
+          mkdir -p "dist/${package}"
+
+          cp target/release/alexandria "dist/${package}/"
+          cp target/release/alexandria-mcp "dist/${package}/"
+          cp target/release/alexandria-brain "dist/${package}/"
+          cp README.md "dist/${package}/"
+
+          if [ -f LICENSE ]; then
+            cp LICENSE "dist/${package}/"
+          fi
+
+          tar -C dist -czf "${package}.tar.gz" "${package}"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: alexandria-${{ needs.prepare.outputs.tag }}-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          gh release create "$TAG" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "Alexandria ${TAG}" \
+            --notes "Automated release for Cargo workspace version ${VERSION}."
