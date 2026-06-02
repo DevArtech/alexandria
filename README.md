@@ -7,11 +7,9 @@
 <strong>A local-first, CLI-first memory substrate built for how an LLM actually thinks —<br/>not for how a human files paper notes.</strong>
 
 <br/>
-<br/>
 
 <em>Maximize useful information per token, and let the agent control retrieval depth.</em>
 
-<br/>
 <br/>
 
 [![CI](https://github.com/DevArtech/alexandria/actions/workflows/ci.yml/badge.svg)](https://github.com/DevArtech/alexandria/actions/workflows/ci.yml)
