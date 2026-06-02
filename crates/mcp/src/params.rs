@@ -21,6 +21,30 @@ pub struct RecallParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GraphParams {
+    #[serde(default)]
+    pub seed: Option<String>,
+    #[serde(default = "default_graph_scope")]
+    pub scope: String,
+    #[serde(default)]
+    pub depth: Option<u32>,
+    #[serde(default)]
+    pub rel: Vec<String>,
+    #[serde(default = "default_max_nodes")]
+    pub max_nodes: usize,
+    #[serde(default)]
+    pub overlay_facets: bool,
+}
+
+fn default_graph_scope() -> String {
+    "seed".to_string()
+}
+
+fn default_max_nodes() -> usize {
+    200
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct MapParams {
     pub seed: String,
     #[serde(default)]

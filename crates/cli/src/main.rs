@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    archive, catalog, consolidate, coverage, expand, forget, init, link, map, meta, pack, recall,
-    reflect, reindex, remember, style, survey, threads, timeline, trace,
+    archive, catalog, consolidate, coverage, expand, forget, graph, init, link, map, meta, pack,
+    recall, reflect, reindex, remember, style, survey, threads, timeline, trace,
 };
 use remote::{dispatch, guard_local_only, manage, resolve_remote};
 
@@ -123,6 +123,30 @@ enum Commands {
         rel: Vec<String>,
         #[arg(long)]
         budget: Option<u32>,
+        /// Human output view: ascii tree, mermaid, or dot
+        #[arg(long, value_enum, default_value = "ascii")]
+        view: commands::map::MapView,
+    },
+    /// Visualize the knowledge graph (seeded, global, or provenance)
+    Graph {
+        /// Engram id or topic (required for seed/provenance scopes)
+        seed: Option<String>,
+        #[arg(long, value_enum, default_value = "seed")]
+        scope: commands::graph::GraphScopeArg,
+        #[arg(long, value_enum, default_value = "ascii")]
+        view: commands::graph::GraphViewArg,
+        #[arg(long)]
+        depth: Option<u32>,
+        #[arg(long)]
+        rel: Vec<String>,
+        #[arg(long, default_value = "200")]
+        max_nodes: usize,
+        /// Color/cluster nodes by collection and tag metadata
+        #[arg(long)]
+        overlay_facets: bool,
+        /// Launch interactive TUI explorer (local library only)
+        #[arg(long)]
+        interactive: bool,
     },
     /// Rebuild the SQLite index from Markdown store
     Reindex,
@@ -365,11 +389,57 @@ fn main() -> Result<()> {
             depth,
             rel,
             budget,
+            view,
         } => {
             if let Some(r) = remote.as_ref() {
-                dispatch::map(r, cli.format, seed, depth, rel, budget)
+                dispatch::map(r, cli.format, seed, depth, rel, budget, view)
             } else {
-                map::run(cli.library, cli.format, seed, depth, rel, budget)
+                map::run(cli.library, cli.format, seed, depth, rel, budget, view)
+            }
+        }
+        Commands::Graph {
+            seed,
+            scope,
+            view,
+            depth,
+            rel,
+            max_nodes,
+            overlay_facets,
+            interactive,
+        } => {
+            if interactive {
+                guard_local_only(remote.as_ref(), "graph --interactive")?;
+            }
+            if let Some(r) = remote.as_ref() {
+                if interactive {
+                    unreachable!("guarded above");
+                }
+                dispatch::graph(
+                    r,
+                    cli.format,
+                    dispatch::GraphRemoteArgs {
+                        seed,
+                        scope,
+                        view,
+                        depth,
+                        rel,
+                        max_nodes,
+                        overlay_facets,
+                    },
+                )
+            } else {
+                graph::run(graph::GraphOptions {
+                    library_path: cli.library,
+                    format: cli.format,
+                    seed,
+                    scope,
+                    view,
+                    depth,
+                    rels: rel,
+                    max_nodes,
+                    overlay_facets,
+                    interactive,
+                })
             }
         }
         Commands::Reindex => {
