@@ -1,37 +1,69 @@
-# Alexandria
+<div align="center">
+<h1>Alexandria</h1>
 
-![Alexandria — agent-native memory substrate](Alexandria.png)
+<img src="Alexandria.png" alt="Alexandria — agent-native memory substrate" width="100%" />
 
-> A local-first, CLI-first "second brain" designed for how an LLM actually thinks, retrieves, and reasons — not for how a human files paper notes.
+<strong>A local-first, CLI-first memory substrate built for how an LLM actually thinks —<br/>not for how a human files paper notes.</strong>
 
-Named after the Library of Alexandria, this is a memory substrate built for an LLM consumer. Its prime directive is simple:
+<br/>
 
-> **Maximize useful information per token, and let the agent control retrieval depth.**
+<em>Maximize useful information per token, and let the agent control retrieval depth.</em>
 
-Memory lives as plain-text Markdown files (the source of truth) with a rebuildable SQLite index layered on top. Nothing is locked in: delete the index and rebuild it from text at any time.
+<br/>
 
-## The ethos
+[![CI](https://github.com/DevArtech/alexandria/actions/workflows/ci.yml/badge.svg)](https://github.com/DevArtech/alexandria/actions/workflows/ci.yml)
+[![Release](https://github.com/DevArtech/alexandria/actions/workflows/release.yml/badge.svg)](https://github.com/DevArtech/alexandria/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/DevArtech/alexandria?sort=semver)](https://github.com/DevArtech/alexandria/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-2021-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![MCP](https://img.shields.io/badge/MCP-ready-7c3aed.svg)](https://modelcontextprotocol.io)
+
+<br/>
+
+[**Quick start**](#-quick-start) ·
+[**Why Alexandria**](#-why-alexandria) ·
+[**CLI**](#use-alexandria-directly-cli) ·
+[**MCP**](#use-alexandria-with-an-agent-mcp) ·
+[**Remote**](#-shared-memory-across-devices-and-agents) ·
+[**Architecture**](docs/ARCHITECTURE.md)
+
+</div>
+
+---
+
+Named after the Library of Alexandria, this is a memory substrate built for an LLM consumer. Memory lives as plain-text Markdown files (the source of truth) with a rebuildable SQLite index layered on top. Nothing is locked in: delete the index and rebuild it from text at any time.
+
+## ✨ Why Alexandria
 
 Most "AI memory" is just `chunk → embed → top-k cosine`. That discards structure, exact recall, relationships, recency, provenance, and — critically — the ability to say *"I think I know this but can't retrieve it cleanly."* Alexandria keeps semantic search as **one signal among several** inside a structured, typed, provenance-aware, uncertainty-aware system.
 
 Three load-bearing principles:
 
-- **Plain text is the source of truth.** Every index is a rebuildable cache.
-- **Honest ignorance is a first-class outcome.** `recall` returns one of five states, not just "rows or nothing."
-- **Enforce by structure, not convention.** When a constraint matters (e.g. relational memory never being quoted), it's made impossible to violate.
+- 📄 **Plain text is the source of truth.** Every index is a rebuildable cache.
+- 🤔 **Honest ignorance is a first-class outcome.** `recall` returns one of five states, not just "rows or nothing."
+- 🔒 **Enforce by structure, not convention.** When a constraint matters (e.g. relational memory never being quoted), it's made impossible to violate.
 
-Memory is typed into tiers, each with its own lifecycle — **working** (ephemeral), **episodic** (append-only events), **provisional** (usable but unearned), **semantic** (curated facts), **procedural** (how-tos), and **relational** (how to work with a user; shapes generation only, **never** quoted). The atomic unit is an **Engram**: a Markdown file with structured YAML frontmatter (id, tier, status, claim, provenance, confidence, salience, typed links).
+Memory is typed into tiers, each with its own lifecycle:
 
-The full design — hybrid retrieval, progressive disclosure, consolidation, the conflict taxonomy, meta-memory, and response modes — is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+| Tier | Lifecycle |
+| --- | --- |
+| **working** | ephemeral scratch |
+| **episodic** | append-only events |
+| **provisional** | usable but unearned |
+| **semantic** | curated facts |
+| **procedural** | how-tos |
+| **relational** | how to work with a user; shapes generation only, **never** quoted |
 
-## Quick start (local)
+The atomic unit is an **Engram**: a Markdown file with structured YAML frontmatter (id, tier, status, claim, provenance, confidence, salience, typed links).
 
-### Build
+> The full design — hybrid retrieval, progressive disclosure, consolidation, the conflict taxonomy, meta-memory, and response modes — is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+## 🚀 Quick start
 
 Requires a recent stable [Rust](https://www.rust-lang.org/tools/install) toolchain.
 
 ```bash
-git clone <repo-url> alexandria
+git clone https://github.com/DevArtech/alexandria.git
 cd alexandria
 cargo build --release   # binaries: alexandria, alexandria-mcp, alexandria-brain
 cargo test              # run the suite
@@ -45,9 +77,16 @@ cp target/release/alexandria target/release/alexandria-mcp target/release/alexan
 
 `alexandria` is the standalone CLI, `alexandria-mcp` is the stdio/HTTP MCP server, and `alexandria-brain` is the Codex second-brain orchestrator.
 
-> **Contributing?** Run `./scripts/setup-hooks.sh` once to enable the pre-commit gate. It auto-formats and lints what it can (`cargo fmt`, `cargo clippy --fix`, `prettier`, `eslint --fix`), then blocks the commit unless `cargo fmt`/`clippy`/`cargo test` and the proxy's `prettier`/`eslint`/typecheck all pass. The same checks run in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request.
->
-> **Releases.** Pushes to `main` run semantic-version release processing ([`.github/workflows/semver.yml`](.github/workflows/semver.yml)). Conventional commits (`fix:`, `feat:`, and breaking-change commits) are collected into a release PR that updates the shared Cargo workspace version and root changelog. When that PR is merged, the release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) maps the new Cargo version to a tag (for example `0.1.1` -> `v0.1.1`), builds with `cargo build --workspace --release --locked`, and publishes a GitHub Release containing `alexandria`, `alexandria-mcp`, and `alexandria-brain`.
+<details>
+<summary><strong>Contributing & releases</strong></summary>
+
+<br/>
+
+**Contributing.** Run `./scripts/setup-hooks.sh` once to enable the pre-commit gate. It auto-formats and lints what it can (`cargo fmt`, `cargo clippy --fix`, `prettier`, `eslint --fix`), then blocks the commit unless `cargo fmt`/`clippy`/`cargo test` and the proxy's `prettier`/`eslint`/typecheck all pass. The same checks run in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request.
+
+**Releases.** Pushes to `main` run semantic-version release processing ([`.github/workflows/semver.yml`](.github/workflows/semver.yml)). Conventional commits (`fix:`, `feat:`, and breaking-change commits) are collected into a release PR that updates the shared Cargo workspace version and root changelog. When that PR is merged, the release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) maps the new Cargo version to a tag (for example `0.1.1` → `v0.1.1`), builds with `cargo build --workspace --release --locked`, and publishes a GitHub Release containing `alexandria`, `alexandria-mcp`, and `alexandria-brain`.
+
+</details>
 
 ### Use Alexandria directly (CLI)
 
@@ -108,7 +147,7 @@ Every command accepts `--format json` for machine/agent consumption and `--libra
 | `low_confidence_gap` | Topic is adjacent to known domains; nothing precise |
 | `nothing` | No meaningful signal |
 
-### Use Alexandria with a local agent (MCP)
+### Use Alexandria with an agent (MCP)
 
 `alexandria-mcp` exposes the memory verbs as MCP tools over stdio, so any MCP-capable agent can recall and remember.
 
@@ -146,7 +185,7 @@ alexandria-brain run "Research X and remember findings" --sandbox read-only --fo
 
 Because memory writes go through the MCP server (not Codex's file sandbox), `--sandbox read-only` still persists memory while preventing workspace file edits. Full setup, internals, sandbox notes, and troubleshooting: **[docs/SECOND_BRAIN.md](docs/SECOND_BRAIN.md)**.
 
-## Shared memory across devices and agents
+## 🌐 Shared memory across devices and agents
 
 `alexandria-mcp` can also serve over **HTTP**, so a single server becomes shared memory for every MCP-capable agent — Codex, Claude, Cursor — connecting by URL. One store, one index, one embedding space (only the server embeds, so every client shares an identical vector space, and concurrent writes are serialized against the single SQLite index).
 
@@ -183,7 +222,7 @@ Full deployment guide (embedder choice, per-client config, verification, operati
 
 **CLI against remote memory:** `alexandria remote add prod --url https://memory.example.com --default` (or `remote use prod`), export the bearer token, then run `alexandria recall "…"` — no `--remote` flag needed while prod is the default. Use `alexandria remote use local` to switch back. See [docs/REMOTE.md](docs/REMOTE.md#5-drive-the-cli-against-a-remote-server).
 
-## Configuration
+## ⚙️ Configuration
 
 `.alexandria/config.toml` is created on `init`:
 
@@ -237,11 +276,16 @@ density_min_count = 3                 # min neighbors in that shell to call it "
 centroid_radius = 0.72                # near-a-collection band for low_confidence_gap
 ```
 
-**Tuning notes:**
+<details>
+<summary><strong>Tuning notes</strong></summary>
+
+<br/>
 
 - Distance thresholds are L2 distances in embedding space and **must be tuned per embedder**. The defaults are oriented to `fastembed`; the `hash` embedder's distances are much larger (roughly `weak ≈ 1.25`, `centroid ≈ 1.4`, `density ≈ 1.55`).
 - For the gap states to be reachable, keep the ordering **`semantic_weak_max_distance < centroid_radius < density_radius`** — otherwise a query can never be "far from any clean hit yet inside a dense neighborhood."
 - The default `fastembed` embedder downloads an ONNX model (~130 MB) on first use; set `embedder = "hash"` for fully offline operation (no semantic-quality guarantees).
+
+</details>
 
 ### Library layout
 
@@ -262,12 +306,12 @@ my-library/
 
 `.alexandria/` holds only derived/config data; everything else is canonical text. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full memory model and storage substrate.
 
-## Roadmap
+## 🗺️ Roadmap
 
 All milestones below are **complete** — Alexandria is fully implemented through M5 plus post-M5 polish.
 
 | Milestone | Scope | Status |
-| --- | --- | --- |
+| --- | --- | :---: |
 | **M1 — Skeleton** | Plain-text store, SQLite + FTS5 index, `init`/`remember`/`recall` (lexical)/`reindex`, five-state recall + response modes | ✅ |
 | **M2 — Hybrid + budget** | Local embeddings (`fastembed` + `hash` for tests), semantic search, RRF fusion, density-based gap states, progressive-disclosure context tree, `expand` | ✅ |
 | **M3 — Graph + consolidation** | Typed edges + traversal, conflict taxonomy, provenance (`--source`/`--derived-from` + `trace`), provisional promotion ladder, `link`/`timeline`/`archive`, the `reflect`/`consolidate` "sleep" pass | ✅ |
@@ -278,6 +322,20 @@ All milestones below are **complete** — Alexandria is fully implemented throug
 
 **Deliberate deferrals (not bugs):** meta-memory signals are operator-driven (`meta --record-correction` / `--record-gap`) rather than auto-detected from conversation; self-calibration is bounded score down-weighting in low-reliability domains, not full per-domain threshold self-tuning. See the open questions in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#16-open-questions--milestones).
 
-## License
+## 📚 Documentation
 
-MIT
+| Doc | What's inside |
+| --- | --- |
+| [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) | The full design: hybrid retrieval, progressive disclosure, consolidation, conflict taxonomy, meta-memory, response modes |
+| [**SECOND_BRAIN.md**](docs/SECOND_BRAIN.md) | `alexandria-brain` setup, internals, sandbox notes, troubleshooting |
+| [**REMOTE.md**](docs/REMOTE.md) | Remote/HTTP deployment, embedder choice, per-client config, operating notes |
+| [**proxy/README.md**](proxy/README.md) | OAuth proxy internals and environment reference |
+
+## 📄 License
+
+Released under the [MIT License](LICENSE).
+
+<div align="center">
+<br/>
+<sub>Built for agents · plain text in, structured recall out.</sub>
+</div>
