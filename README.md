@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="Alexandria.png" alt="Alexandria — agent-native memory substrate" width="100%" />
-
 <h1>Alexandria</h1>
+
+<img src="Alexandria.png" alt="Alexandria — agent-native memory substrate" width="100%" />
 
 <strong>A local-first, CLI-first memory substrate built for how an LLM actually thinks —<br/>not for how a human files paper notes.</strong>
 
