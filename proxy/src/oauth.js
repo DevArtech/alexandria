@@ -451,17 +451,202 @@ function parseCookies(header) {
 }
 
 function loginPage(returnUrl, error = "", csrf = "") {
-  const err = error ? `<p style="color:#b00020">${escapeHtml(error)}</p>` : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Alexandria Login</title></head>
-<body style="font-family:system-ui,sans-serif;max-width:420px;margin:4rem auto;padding:1rem">
-<h1>Alexandria</h1><p>Sign in to authorize MCP access.</p>${err}
-<form method="POST" action="/login">
-<input type="hidden" name="return" value="${escapeHtml(returnUrl)}"/>
-<input type="hidden" name="csrf" value="${escapeHtml(csrf)}"/>
-<label>Username<br/><input name="username" required autocomplete="username"/></label><br/><br/>
-<label>Password<br/><input name="password" type="password" required autocomplete="current-password"/></label><br/><br/>
-<button type="submit">Sign in</button>
-</form></body></html>`;
+  const err = error ? `<div class="alert" role="alert">${escapeHtml(error)}</div>` : "";
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex, nofollow"/>
+<title>Alexandria — Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --paper: #f4f3ee;
+    --paper-2: #efede6;
+    --ink: #18170f;
+    --ink-soft: #3b392f;
+    --muted: #6f6d62;
+    --line: #d7d4c8;
+    --line-strong: #c4c0b2;
+    --serif: "Playfair Display", Georgia, "Times New Roman", serif;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--ink);
+    background:
+      radial-gradient(120% 120% at 50% -10%, #faf9f5 0%, var(--paper) 45%, var(--paper-2) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.25rem;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .card {
+    width: 100%;
+    max-width: 432px;
+    background: #fcfbf7;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 2.5rem 2.25rem 2rem;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.7) inset,
+      0 18px 40px -24px rgba(24,23,15,0.45);
+  }
+  .brand { text-align: center; margin-bottom: 1.75rem; }
+  .wordmark {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(2.4rem, 8vw, 3.1rem);
+    letter-spacing: -0.01em;
+    line-height: 1;
+    margin: 0;
+    color: var(--ink);
+  }
+  .tagline {
+    font-weight: 600;
+    font-size: 0.92rem;
+    letter-spacing: 0.01em;
+    margin: 0.65rem 0 0;
+    color: var(--ink-soft);
+  }
+  .subtitle {
+    font-size: 0.86rem;
+    color: var(--muted);
+    margin: 0.35rem 0 0;
+  }
+  .rule {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--line-strong), transparent);
+    margin: 1.5rem 0;
+    border: 0;
+  }
+  .alert {
+    background: #fbeaea;
+    border: 1px solid #e8c4c4;
+    color: #8a1f1f;
+    font-size: 0.85rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 10px;
+    margin-bottom: 1.1rem;
+  }
+  form { margin: 0; }
+  .field { margin-bottom: 1rem; }
+  label.lbl {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+  input[type="text"], input[name="username"], input[type="password"] {
+    width: 100%;
+    font-family: var(--sans);
+    font-size: 0.95rem;
+    color: var(--ink);
+    background: #fffefb;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 0.7rem 1rem;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  input::placeholder { color: #a8a597; }
+  input:focus {
+    border-color: var(--ink);
+    box-shadow: 0 0 0 3px rgba(24,23,15,0.12);
+  }
+  button {
+    width: 100%;
+    margin-top: 0.5rem;
+    font-family: var(--sans);
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--paper);
+    background: var(--ink);
+    border: 1px solid var(--ink);
+    border-radius: 999px;
+    padding: 0.8rem 1rem;
+    cursor: pointer;
+    transition: transform 0.05s ease, background 0.15s ease, box-shadow 0.15s ease;
+  }
+  button:hover { background: #000; box-shadow: 0 8px 20px -10px rgba(24,23,15,0.6); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 3px solid rgba(24,23,15,0.25); outline-offset: 2px; }
+  .note {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin: 1.1rem 0 0;
+  }
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.45rem;
+    margin-top: 1.75rem;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--ink-soft);
+    background: #fbfaf6;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.3rem 0.7rem;
+    white-space: nowrap;
+  }
+  .badge svg { width: 13px; height: 13px; flex: none; }
+  @media (prefers-color-scheme: dark) {
+    /* keep the warm paper aesthetic regardless of OS theme */
+  }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand">
+    <h1 class="wordmark">Alexandria</h1>
+    <p class="tagline">Agent-native memory substrate</p>
+    <p class="subtitle">Sign in to authorize MCP access.</p>
+  </div>
+  <hr class="rule"/>
+  ${err}
+  <form method="POST" action="/login">
+    <input type="hidden" name="return" value="${escapeHtml(returnUrl)}"/>
+    <input type="hidden" name="csrf" value="${escapeHtml(csrf)}"/>
+    <div class="field">
+      <label class="lbl" for="username">Username</label>
+      <input id="username" name="username" required autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" autofocus/>
+    </div>
+    <div class="field">
+      <label class="lbl" for="password">Password</label>
+      <input id="password" name="password" type="password" required autocomplete="current-password"/>
+    </div>
+    <button type="submit">Sign in</button>
+  </form>
+  <p class="note">Authorizing access to your library&rsquo;s memory.</p>
+  <div class="badges">
+    <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 15V9l3 3 3-3v6"/><path d="M17 9v4m0 0 2-2m-2 2-2-2"/></svg>Markdown-native</span>
+    <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Hybrid retrieval</span>
+    <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="7" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.2 8.4 10.5 16M16.8 7.6 13 15.7"/></svg>Memory graph</span>
+    <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>MCP-ready</span>
+  </div>
+</main>
+</body>
+</html>`;
 }
 
 function escapeHtml(s) {
