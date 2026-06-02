@@ -14,7 +14,7 @@ name = "alexandria_brain"
 path = "src/lib.rs"
 
 [dependencies]
-alexandria-core = { path = "../core", version = "0.1.0" }
+alexandria-core = { path = "../core", version = "0.1.1" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
