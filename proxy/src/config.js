@@ -31,23 +31,11 @@ export function loadConfig(env = process.env) {
 
     const upstreamToken = opt("ALEXANDRIA_MCP_TOKEN");
     const allowLegacyStaticToken = bool("ALLOW_LEGACY_STATIC_TOKEN", false);
-    // The client-facing legacy bearer MUST be distinct from the secret the proxy
-    // injects upstream — otherwise a single leaked client token also crosses the
-    // internal trust boundary. No silent fallback to ALEXANDRIA_MCP_TOKEN.
-    const legacyBearerToken = opt("LEGACY_BEARER_TOKEN");
-    if (allowLegacyStaticToken) {
-      if (!legacyBearerToken) {
-        throw new Error(
-          "ALLOW_LEGACY_STATIC_TOKEN=true requires a distinct LEGACY_BEARER_TOKEN " +
-            "(do not reuse ALEXANDRIA_MCP_TOKEN).",
-        );
-      }
-      if (upstreamToken && legacyBearerToken === upstreamToken) {
-        throw new Error(
-          "LEGACY_BEARER_TOKEN must differ from ALEXANDRIA_MCP_TOKEN; reusing the " +
-            "upstream token collapses the client/internal trust boundary.",
-        );
-      }
+    const legacyBearerToken = opt("LEGACY_BEARER_TOKEN", upstreamToken);
+    if (allowLegacyStaticToken && !legacyBearerToken) {
+      throw new Error(
+        "ALLOW_LEGACY_STATIC_TOKEN=true requires LEGACY_BEARER_TOKEN or ALEXANDRIA_MCP_TOKEN.",
+      );
     }
 
     const scopes = list("OAUTH_SCOPES").length

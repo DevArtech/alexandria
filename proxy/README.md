@@ -24,8 +24,8 @@ bearer, if enabled) into a trusted internal request.
   double-submit CSRF token and `/logout` for explicit session revocation.
 - **Abuse hardening**: per-IP rate limiting on `/login` and `/oauth/register`, request
   header/body timeouts, a capped request-body size, and stripping of inbound `x-auth-*` headers.
-- **Dual auth mode** (optional): accept legacy static bearer alongside OAuth JWTs (token must
-  be distinct from the upstream `ALEXANDRIA_MCP_TOKEN`).
+- **Dual auth mode** (optional): accept legacy static bearer alongside OAuth JWTs (defaults to
+  `ALEXANDRIA_MCP_TOKEN` when `LEGACY_BEARER_TOKEN` is unset).
 - **Rewrites auth**: strips the client token and injects the upstream static bearer.
 - **Streams**: long-lived Streamable-HTTP / SSE responses pass straight through.
 - **Discovery**: RFC 9728 protected resource metadata + RFC 8414 authorization server metadata.
@@ -47,7 +47,7 @@ All configuration is via environment variables (see [`.env.example`](./.env.exam
 | `OAUTH_SCOPES`              | no           | `alexandria:read alexandria:write` | Advertised scopes.                                                                                        |
 | `OAUTH_REQUIRED_SCOPES`     | no           | –                                  | Scopes every request must carry.                                                                          |
 | `ALLOW_LEGACY_STATIC_TOKEN` | no           | `false`                            | Also accept legacy static bearer.                                                                         |
-| `LEGACY_BEARER_TOKEN`       | if legacy on | –                                  | Legacy client token. **Required** when legacy mode is on and **must differ** from `ALEXANDRIA_MCP_TOKEN`. |
+| `LEGACY_BEARER_TOKEN`       | no           | `ALEXANDRIA_MCP_TOKEN`             | Legacy client token for Cursor/Codex; leave empty to reuse the MCP token.                                 |
 | `UPSTREAM_URL`              | no           | `http://127.0.0.1:8080`            | `alexandria-mcp` base URL.                                                                                |
 | `ALEXANDRIA_MCP_TOKEN`      | recommended  | –                                  | Static bearer injected upstream.                                                                          |
 | `TRUST_PROXY`               | no           | `false`                            | Trust `X-Forwarded-For` for client IP (enable only behind a trusted TLS terminator).                      |

@@ -41,8 +41,7 @@ services:
       LOGIN_PASSWORD: ${LOGIN_PASSWORD:?set LOGIN_PASSWORD in .env}
       DATA_DIR: /data
       ALLOW_LEGACY_STATIC_TOKEN: ${ALLOW_LEGACY_STATIC_TOKEN:-false}
-      # If legacy mode is enabled, this MUST be set and MUST differ from
-      # ALEXANDRIA_MCP_TOKEN (the proxy refuses to start otherwise).
+      # If empty, defaults to ALEXANDRIA_MCP_TOKEN (same token clients already use).
       LEGACY_BEARER_TOKEN: ${LEGACY_BEARER_TOKEN:-}
       # DoS / abuse hardening (all optional; sane defaults baked in).
       # Set TRUST_PROXY=true only when a trusted TLS terminator sets X-Forwarded-For.
