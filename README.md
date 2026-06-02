@@ -1,5 +1,4 @@
 <div align="center">
-
 <h1>Alexandria</h1>
 
 <img src="Alexandria.png" alt="Alexandria — agent-native memory substrate" width="100%" />
