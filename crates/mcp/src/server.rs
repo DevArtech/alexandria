@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct AlexandriaMcpServer {
     state: Arc<Mutex<ServerState>>,
+    #[allow(dead_code)]
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
