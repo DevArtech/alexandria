@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct AlexandriaMcpServer {
     state: Arc<Mutex<ServerState>>,
+    #[allow(dead_code)]
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
@@ -216,12 +217,8 @@ impl AlexandriaMcpServer {
 #[tool_handler]
 impl ServerHandler for AlexandriaMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "Alexandria memory tools. Call recall before answering; honor five-state results and response_mode; remember durable facts after acting; never quote relational memory.".into(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Alexandria memory tools. Call recall before answering; honor five-state results and response_mode; remember durable facts after acting; never quote relational memory.",
+        )
     }
 }

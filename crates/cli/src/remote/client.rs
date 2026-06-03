@@ -53,13 +53,13 @@ pub fn call_tool(remote: &ResolvedRemote, name: &str, arguments: Value) -> Resul
             other => bail!("internal error: tool arguments must be a JSON object, got {other}"),
         };
 
+        let mut request = CallToolRequestParams::new(name);
+        if let Some(arguments) = args_map {
+            request = request.with_arguments(arguments);
+        }
+
         let result = client
-            .call_tool(CallToolRequestParams {
-                meta: None,
-                name: name.into(),
-                arguments: args_map,
-                task: None,
-            })
+            .call_tool(request)
             .await
             .map_err(|e| map_tool_error(e, &label))?;
 
