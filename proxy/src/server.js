@@ -166,8 +166,9 @@ function stripInboundAuthHeaders(req) {
 function bearerToken(req) {
   const h = req.headers["authorization"];
   if (!h) return null;
-  const m = /^Bearer\s+(.+)$/i.exec(h);
-  return m ? m[1].trim() : null;
+  if (!h.toLowerCase().startsWith("bearer ")) return null;
+  const token = h.slice("bearer ".length).trim();
+  return token || null;
 }
 
 function constantTimeEq(a, b) {
